@@ -54,6 +54,16 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       client.prepaymentConfig().catch(() => null),
     ]);
 
+    // Payment ledger (funds added, e.g. the card payment behind AI credits).
+    // Tolerated: history may be unavailable while balance/prepay succeed.
+    let paymentsJson: string | null = null;
+    try {
+      const entries = await client.billingHistory(20);
+      paymentsJson = JSON.stringify(entries.slice(0, 20));
+    } catch (e) {
+      console.warn("[billing-sync] billing_history unavailable:", e instanceof Error ? e.message : String(e));
+    }
+
     // ---- per-product breakdown via Billing Insights ----
     let coreComputeMtd = 0;
     let aiUsageMtd = 0;
@@ -117,7 +127,7 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
     db.prepare(
       `UPDATE billing_state
        SET compute_balance = ?, core_compute_mtd = ?, ai_usage_mtd = ?, tax_mtd = ?,
-           account_balance = ?, prepaid_amount = ?, breakdown_json = ?, inference_balance = ?, last_synced = ?
+           account_balance = ?, prepaid_amount = ?, payments_json = ?, breakdown_json = ?, inference_balance = ?, last_synced = ?
        WHERE id = 'singleton'`
     ).run(
       mtd,
@@ -126,6 +136,7 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       round6(taxMtd),
       acctBal,
       prepaidAmount ?? 0,
+      paymentsJson,
       breakdownJson,
       inferenceBalance ?? 0,
       ts
@@ -178,6 +189,13 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
 export function billingSummary() {
   const db = getDb();
   const state = db.prepare("SELECT * FROM billing_state WHERE id='singleton'").get() as any;
+  let payments: Array<{ description?: string; amount?: string; date?: string; type?: string }> = [];
+  try {
+    payments = state?.payments_json ? JSON.parse(state.payments_json) : [];
+    if (!Array.isArray(payments)) payments = [];
+  } catch {
+    payments = [];
+  }
   const recent = db
     .prepare(
       `SELECT ts, compute_balance, core_compute_mtd, ai_usage_mtd, inference_balance, spend_limit
@@ -185,7 +203,7 @@ export function billingSummary() {
        ORDER BY ts DESC LIMIT 500`
     )
     .all();
-  return { state, history: recent.reverse() };
+  return { state, payments, history: recent.reverse() };
 }
 
 function round6(n: number): number {

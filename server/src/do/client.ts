@@ -103,6 +103,14 @@ export interface AccountInfo {
   status?: string;
 }
 
+/** One entry from GET /v2/customers/my/billing_history (payments, invoices...). */
+export interface BillingHistoryEntry {
+  description: string;
+  amount: string;
+  date: string;
+  type: string;
+}
+
 // ---- GenAI Model Routers (control plane: /v2/gen-ai/models/routers) ----
 export interface ModelRouterSelectionPolicy {
   prefer?: "none" | "cheapest" | "fastest" | string;
@@ -190,6 +198,19 @@ export class DOClient {
       team_name: a.team?.name,
       status: a.status,
     };
+  }
+
+  /** Payment / invoice ledger (e.g. the Visa payment that funded AI credits). */
+  async billingHistory(perPage = 20): Promise<BillingHistoryEntry[]> {
+    const { status, json, text } = await req(
+      CTRL,
+      this.ctrlToken,
+      "GET",
+      `/v2/customers/my/billing_history?per_page=${perPage}`
+    );
+    if (status === 404) return [];
+    const j = expect(status, json, text);
+    return (j.billing_history ?? []) as BillingHistoryEntry[];
   }
 
   /**

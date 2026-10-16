@@ -22,6 +22,7 @@ interface BillingSummary {
     is_blocked: number;
     last_synced: string;
   };
+  payments?: Array<{ description?: string; amount?: string; date?: string; type?: string }>;
   history: Array<{ ts: string; compute_balance: number; inference_balance: number }>;
 }
 
@@ -71,6 +72,11 @@ export default function Dashboard() {
   );
 
   const s = billing?.state;
+  const payments = billing?.payments ?? [];
+  const paidIn = payments
+    .filter((p) => p.type === "Payment")
+    .reduce((sum, p) => sum + Math.abs(parseFloat(p.amount ?? "0") || 0), 0);
+  const latestPayment = payments[0];
 
   return (
     <Grid narrow className="sf-content">
@@ -134,23 +140,19 @@ export default function Dashboard() {
 
       <Column sm={4} md={4} lg={4}>
         <ClickableTile onClick={load}>
-          <div className="sf-muted">Account Credit</div>
+          <div className="sf-muted">Account Payments</div>
           <div className="sf-stat-number">
-            {s && s.account_balance != null ? (
-              s.account_balance < 0 ? (
-                <>${Math.abs(s.account_balance).toFixed(2)}</>
-              ) : (
-                <>${s.account_balance.toFixed(2)}</>
-              )
-            ) : (
-              "—"
-            )}
+            {payments.length > 0 ? `$${paidIn.toFixed(2)}` : "—"}
           </div>
-          {s && s.account_balance != null && (
+          {latestPayment ? (
             <div className="sf-muted">
-              {s.account_balance < 0 ? "credit available" : s.account_balance > 0 ? "amount due" : "settled"}
+              {latestPayment.description} ·{" "}
+              {latestPayment.date ? new Date(latestPayment.date).toLocaleDateString() : ""}
             </div>
+          ) : (
+            <div className="sf-muted">no payments recorded</div>
           )}
+          <div className="sf-muted">Live credit balance is on your DO billing page</div>
         </ClickableTile>
       </Column>
 
