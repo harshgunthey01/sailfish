@@ -183,8 +183,21 @@ function migrate(d: DatabaseSync) {
     observed_at TEXT NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS thresholds (
+  -- monthly budget envelopes with progressive alerts (MONITORING.md Phase 6)
+  CREATE TABLE IF NOT EXISTS budgets (
     id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('ai','core','total')),
+    amount_usd REAL NOT NULL CHECK (amount_usd > 0),
+    alerts_json TEXT NOT NULL DEFAULT '[50,80,100]',
+    channels_json TEXT NOT NULL DEFAULT '["smtp"]',
+    fired_json TEXT NOT NULL DEFAULT '[]',
+    fired_month TEXT NOT NULL DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS thresholds (    id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     metric TEXT NOT NULL CHECK (metric IN ('compute_balance','inference_balance','inference_remaining_pct','daily_spend_usd','daily_spend_spike')),
     operator TEXT NOT NULL CHECK (operator IN ('gt','lt')),

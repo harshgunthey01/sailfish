@@ -168,6 +168,11 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       daily_spend_usd: spike.today,
       daily_spend_spike: spike.ratio,
     });
+    breaches.push(...evaluateBudgets(db, {
+      ai: round6(aiUsageMtd),
+      core: round6(coreComputeMtd),
+      tax: round6(taxMtd),
+    }));
     if (breaches.length > 0) {
       void notifyBreaches(breaches, (ch, msg) => sendChannel(ch, msg, vault));
     }
@@ -422,6 +427,108 @@ export function coreAttribution(droplets: Array<{ name: string; region?: string 
   };
 }
 
+/** Month-to-date spend per budget scope. */
+export function budgetSpend(db: ReturnType<typeof getDb>): { ai: number; core: number; tax: number } {
+  const s = db.prepare("SELECT ai_usage_mtd, core_compute_mtd, tax_mtd FROM billing_state WHERE id='singleton'").get() as any;
+  return {
+    ai: round6(s?.ai_usage_mtd ?? 0),
+    core: round6(s?.core_compute_mtd ?? 0),
+    tax: round6(s?.tax_mtd ?? 0),
+  };
+}
+
+function scopeSpend(scope: string, spend: { ai: number; core: number; tax: number }): number {
+  if (scope === "ai") return spend.ai;
+  if (scope === "core") return spend.core;
+  return round6(spend.ai + spend.core + spend.tax);
+}
+
+/** Monthly budget envelopes: each alert level fires once per month. */
+export function evaluateBudgets(
+  db: ReturnType<typeof getDb>,
+  spend: { ai: number; core: number; tax: number }
+): string[] {
+  const month = new Date().toISOString().slice(0, 7);
+  const rows = db.prepare("SELECT * FROM budgets WHERE is_active = 1").all() as any[];
+  const breached: string[] = [];
+  for (const b of rows) {
+    const amount = Number(b.amount_usd);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    if (b.fired_month !== month) {
+      db.prepare("UPDATE budgets SET fired_json = '[]', fired_month = ? WHERE id = ?").run(month, b.id);
+      b.fired_json = "[]";
+      b.fired_month = month;
+    }
+    let fired: number[] = [];
+    try {
+      const parsed = JSON.parse(b.fired_json);
+      if (Array.isArray(parsed)) fired = parsed.filter((n) => typeof n === "number");
+    } catch {
+      fired = [];
+    }
+    let levels: number[] = [];
+    try {
+      const parsed = JSON.parse(b.alerts_json);
+      if (Array.isArray(parsed)) {
+        levels = parsed
+          .map((n) => Number(n))
+          .filter((n) => Number.isFinite(n) && n > 0 && n <= 1000)
+          .sort((x, y) => x - y);
+      }
+    } catch {
+      levels = [];
+    }
+    const value = scopeSpend(b.scope, spend);
+    const pct = round6((value / amount) * 100);
+    const newly = levels.filter((l) => pct >= l && !fired.includes(l));
+    if (newly.length === 0) continue;
+    const updated = [...fired, ...newly].sort((x, y) => x - y);
+    db.prepare("UPDATE budgets SET fired_json = ? WHERE id = ?").run(JSON.stringify(updated), b.id);
+    for (const l of newly) {
+      breached.push(`${b.name}: ${pct}% of $${amount} ${b.scope} budget ($${value})`);
+    }
+  }
+  return breached;
+}
+
+/** Budgets with live progress + month-end pace for UI. */
+export function budgetProgress() {
+  const db = getDb();
+  const spend = budgetSpend(db);
+  const now = new Date();
+  const elapsed = Math.max(1, now.getUTCDate());
+  const dim = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+  const rows = db.prepare("SELECT * FROM budgets ORDER BY created_at").all() as any[];
+  return {
+    budgets: rows.map((b) => {
+      const value = scopeSpend(b.scope, spend);
+      const pct = b.amount_usd > 0 ? round6((value / Number(b.amount_usd)) * 100) : 0;
+      const projected = round6((value / elapsed) * dim);
+      let fired: number[] = [];
+      try {
+        const p = JSON.parse(b.fired_json);
+        if (Array.isArray(p)) fired = p;
+      } catch {
+        fired = [];
+      }
+      return {
+        id: b.id,
+        name: b.name,
+        scope: b.scope,
+        amount_usd: b.amount_usd,
+        alerts: JSON.parse(b.alerts_json || "[]"),
+        channels: JSON.parse(b.channels_json || "[]"),
+        is_active: !!b.is_active,
+        spend_usd: value,
+        pct,
+        projected_eom_usd: projected,
+        on_pace_to_exceed: projected > Number(b.amount_usd),
+        fired,
+        fired_month: b.fired_month,
+      };
+    }),
+  };
+}
 /** Month-end projection + days of manual credit left (MONITORING.md §A2). */
 export function forecastSummary() {
   const db = getDb();

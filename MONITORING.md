@@ -265,7 +265,7 @@ them into an inventory.
 
 ---
 
-## Phase 6 — Budget envelopes (specified, not built)
+## Phase 6 — Budget envelopes (built)
 
 **Why:** thresholds today are single tripwires; FinOps runs on monthly
 envelopes with progressive alerts. All inputs already exist (MTD buckets,
@@ -317,8 +317,9 @@ after creation — budgets are living objects, not fire-and-forget.
   (rate × days-left, reusing the forecast math) and `on_pace` flag
   (`projected > amount`).
 - `POST /budgets {name, scope, amount_usd, alerts?, channels?}` (validate:
-  amount > 0, scope known, alerts ascending 1–100; alerts default to
-  [50,80,100] only as a suggestion when the customer leaves them blank).
+  amount > 0, scope known, alerts ascending percentages up to 1000 — levels
+  above 100 catch over-budget drift; alerts default to [50,80,100] only as a
+  suggestion when the customer leaves them blank).
 - `PUT /budgets/:id {amount_usd?, alerts?, channels?, is_active?}` (same
   validation; changing alerts mid-month does not refire already-fired levels).
 - `DELETE /budgets/:id`.
@@ -341,7 +342,7 @@ after creation — budgets are living objects, not fire-and-forget.
 
 ---
 
-## Phase 7 — Digest email, customer-chosen cadence (specified, not built)
+## Phase 7 — Digest email, customer-chosen cadence (built)
 
 **Why:** cadence beats dashboards — the numbers should reach the inbox
 without opening the app. All content already exists as endpoints/functions.

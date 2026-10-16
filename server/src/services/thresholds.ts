@@ -61,7 +61,11 @@ export async function notifyBreaches(breaches: string[], send: (channel: Channel
   if (breaches.length === 0) return;
   const db = getDb();
   const channels = db
-    .prepare("SELECT channels_json FROM thresholds WHERE is_active = 1")
+    .prepare(
+      `SELECT channels_json FROM thresholds WHERE is_active = 1
+       UNION ALL
+       SELECT channels_json FROM budgets WHERE is_active = 1`
+    )
     .all()
     .flatMap((r: any) => {
       try {

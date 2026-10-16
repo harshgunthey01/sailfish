@@ -16,6 +16,7 @@ import {
   Tag,
   Dropdown,
   Checkbox,
+  ProgressBar,
 } from "@carbon/react";
 import { api } from "../api";
 
@@ -60,6 +61,40 @@ export default function SettingsPage() {
   const [creditRemaining, setCreditRemaining] = useState("");
   const [creditAsOf, setCreditAsOf] = useState<string | null>(null);
 
+  // ---- budgets (MONITORING.md Phase 6) ----
+  const [budgets, setBudgets] = useState<
+    Array<{
+      id: string;
+      name: string;
+      scope: string;
+      amount_usd: number;
+      alerts: number[];
+      channels: string[];
+      is_active: boolean;
+      spend_usd: number;
+      pct: number;
+      projected_eom_usd: number;
+      on_pace_to_exceed: boolean;
+      fired: number[];
+    }>
+  >([]);
+  const [bName, setBName] = useState("");
+  const [bScope, setBScope] = useState("ai");
+  const [bAmount, setBAmount] = useState(50);
+  const [bAlerts, setBAlerts] = useState("50,80,100");
+  const [editingBudget, setEditingBudget] = useState<string | null>(null);
+
+  // ---- digest (MONITORING.md Phase 7) ----
+  const [digestEnabled, setDigestEnabled] = useState(false);
+  const [digestFreq, setDigestFreq] = useState("weekly");
+  const [digestNextDue, setDigestNextDue] = useState<string | null>(null);
+  const FREQ_LABELS: Record<string, string> = {
+    daily: "Daily",
+    weekly: "Weekly",
+    biweekly: "Every 2 weeks",
+    bimonthly: "Every 2 months",
+  };
+
   // ---- backups ----
   const [backups, setBackups] = useState<Array<{ file: string; bytes: number; created_at: string }>>([]);
   const [pendingRestore, setPendingRestore] = useState<string | null>(null);
@@ -89,8 +124,7 @@ export default function SettingsPage() {
     Promise.all([
       api.get<{ log: any[] }>("/notifications/log"),
       api.get<{ thresholds: Threshold[] }>("/notifications/thresholds"),
-      api.get<{ authenticated: boolean; email?: string }>("/setup/me"),
-      api.get<{
+      api.get<{ authenticated: boolean; email?: string }>("/setup/me"),      api.get<{
         configured: boolean;
         host: string;
         port: number;
@@ -104,8 +138,12 @@ export default function SettingsPage() {
         "/setup/status"
       ),
       api.get<{ remaining: number | null; as_of: string | null }>("/setup/credit"),
+      api.get<{ budgets: any[] }>("/notifications/budgets"),
+      api.get<{ enabled: boolean; frequency: string; next_due: string | null }>(
+        "/notifications/digest"
+      ),
     ])
-      .then(([l, t, me, smtp, st, credit]) => {
+      .then(([l, t, me, smtp, st, credit, bg, dg]) => {
         setLog(l.log as any[]);
         setThresholds(t.thresholds as Threshold[]);
         if (me.authenticated) setAdminEmail(me.email ?? "");
@@ -119,6 +157,10 @@ export default function SettingsPage() {
         setDoConfigured(st.do_auth_configured);
         if (credit.remaining != null) setCreditRemaining(String(credit.remaining));
         setCreditAsOf(credit.as_of);
+        setBudgets(bg.budgets);
+        setDigestEnabled(dg.enabled);
+        setDigestFreq(dg.frequency);
+        setDigestNextDue(dg.next_due);
       })
       .catch(() => {});
 
@@ -348,6 +390,225 @@ export default function SettingsPage() {
             }
           >
             {busy ? <InlineLoading /> : "Save credit balance"}
+          </Button>
+        </div>
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>Monthly budgets</h5>
+        <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+          Monthly envelopes with progressive alerts. Alert levels are yours to define
+          (comma-separated percentages, e.g. 50,80,100 — above 100 catches over-budget
+          drift). Each level notifies once per month; editing levels never refires
+          what already fired.
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}>
+          <TextInput
+            id="b-name"
+            labelText="Name"
+            placeholder="AI inference"
+            value={bName}
+            onChange={(e: any) => setBName(e.target.value)}
+          />
+          <Dropdown
+            id="b-scope"
+            titleText="Scope"
+            label="scope"
+            items={["ai", "core", "total"]}
+            selectedItem={bScope}
+            onChange={({ selectedItem }: any) => setBScope(selectedItem)}
+          />
+          <NumberInput
+            id="b-amount"
+            label="Monthly cap ($)"
+            min={0}
+            value={bAmount}
+            onChange={(e: any) => setBAmount(Number(e.target.value))}
+          />
+          <TextInput
+            id="b-alerts"
+            labelText="Alert levels (%)"
+            placeholder="50,80,100"
+            value={bAlerts}
+            onChange={(e: any) => setBAlerts(e.target.value)}
+          />
+          <Button
+            kind="primary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                if (editingBudget) {
+                  await api.put(`/notifications/budgets/${editingBudget}`, {
+                    amount_usd: bAmount,
+                    alerts: bAlerts,
+                  });
+                  setEditingBudget(null);
+                  setNotice({ kind: "success", text: "Budget updated." });
+                } else {
+                  if (!bName.trim()) throw new Error("Name is required.");
+                  await api.post("/notifications/budgets", {
+                    name: bName.trim(),
+                    scope: bScope,
+                    amount_usd: bAmount,
+                    alerts: bAlerts,
+                  });
+                  setNotice({ kind: "success", text: "Budget created." });
+                }
+                setBName("");
+                setBAlerts("50,80,100");
+                load();
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : editingBudget ? "Update budget" : "Create budget"}
+          </Button>
+          {editingBudget && (
+            <Button
+              kind="ghost"
+              disabled={busy}
+              onClick={() => {
+                setEditingBudget(null);
+                setBName("");
+                setBAlerts("50,80,100");
+              }}
+            >
+              Cancel edit
+            </Button>
+          )}
+        </div>
+        <StructuredListWrapper>
+          <StructuredListHead>
+            <StructuredListRow head>
+              <StructuredListCell head>Budget</StructuredListCell>
+              <StructuredListCell head>Spent</StructuredListCell>
+              <StructuredListCell head>Progress</StructuredListCell>
+              <StructuredListCell head>Pace</StructuredListCell>
+              <StructuredListCell head>Actions</StructuredListCell>
+            </StructuredListRow>
+          </StructuredListHead>
+          <StructuredListBody>
+            {budgets.map((b) => (
+              <StructuredListRow key={b.id}>
+                <StructuredListCell>
+                  {b.name} <span className="sf-muted">({b.scope}, ${b.amount_usd})</span>
+                  {!b.is_active && <Tag type="cool-gray">paused</Tag>}
+                </StructuredListCell>
+                <StructuredListCell>
+                  ${b.spend_usd.toFixed(2)} ({b.pct.toFixed(0)}%)
+                </StructuredListCell>
+                <StructuredListCell>
+                  <ProgressBar
+                    label=""
+                    hideLabel
+                    value={Math.min(b.pct, 100)}
+                    max={100}
+                    status={b.pct >= 100 ? "error" : "active"}
+                  />
+                </StructuredListCell>
+                <StructuredListCell>
+                  {b.on_pace_to_exceed ? (
+                    <Tag type="red">over pace (${b.projected_eom_usd.toFixed(0)} EOM)</Tag>
+                  ) : (
+                    <span className="sf-muted">on pace (${b.projected_eom_usd.toFixed(0)} EOM)</span>
+                  )}
+                </StructuredListCell>
+                <StructuredListCell>
+                  <div style={{ display: "flex", gap: "0.25rem" }}>
+                    <Button
+                      size="sm"
+                      kind="ghost"
+                      onClick={() => {
+                        setEditingBudget(b.id);
+                        setBName(b.name);
+                        setBScope(b.scope);
+                        setBAmount(b.amount_usd);
+                        setBAlerts(b.alerts.join(","));
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                      }}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      kind="danger--ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        if (!window.confirm(`Delete budget “${b.name}”?`)) return;
+                        run(async () => {
+                          await api.delete(`/notifications/budgets/${b.id}`);
+                          setNotice({ kind: "success", text: "Budget deleted." });
+                          load();
+                        });
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </StructuredListCell>
+              </StructuredListRow>
+            ))}
+          </StructuredListBody>
+        </StructuredListWrapper>
+        {budgets.length === 0 && (
+          <p className="sf-muted">No budgets yet — create one above.</p>
+        )}
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>Digest email</h5>
+        <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+          Periodic summary (spend, top model, forecast, cache, anomalies, credit) to
+          your admin email. Requires SMTP notifications above.
+          {digestNextDue ? ` Next due: ${digestNextDue}.` : ""}
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}>
+          <Checkbox
+            id="digest-enabled"
+            labelText="Enabled"
+            checked={digestEnabled}
+            onChange={(v: any) => setDigestEnabled(typeof v === "boolean" ? v : v.target.checked)}
+          />
+          <Dropdown
+            id="digest-freq"
+            titleText="Cadence"
+            label="cadence"
+            items={["daily", "weekly", "biweekly", "bimonthly"]}
+            itemToString={(f: string) => FREQ_LABELS[f] ?? f}
+            selectedItem={digestFreq}
+            onChange={({ selectedItem }: any) => setDigestFreq(selectedItem)}
+          />
+          <Button
+            kind="primary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const r = await api.post<{ ok: boolean; next_due: string | null }>(
+                  "/notifications/digest",
+                  { enabled: digestEnabled, frequency: digestFreq }
+                );
+                setDigestNextDue(r.next_due);
+                setNotice({ kind: "success", text: "Digest settings saved." });
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Save digest"}
+          </Button>
+          <Button
+            kind="secondary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const r = await api.post<{ ok: boolean; detail: string }>(
+                  "/notifications/digest/test"
+                );
+                setNotice({
+                  kind: r.ok ? "success" : "error",
+                  text: r.ok ? "Test digest sent." : `Test failed: ${r.detail}`,
+                });
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Send test digest"}
           </Button>
         </div>
       </Column>

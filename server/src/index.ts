@@ -17,6 +17,7 @@ import { infrastructureRoutes } from "./api/routes/infrastructure.js";
 import { notificationRoutes } from "./api/routes/notifications.js";
 import { scheduleEvery, scheduleDaily } from "./services/scheduler.js";
 import { applyPendingRestore, createBackup, listBackups } from "./services/backup.js";
+import { checkDigestDue } from "./services/digest.js";
 import { syncBilling } from "./services/billing-sync.js";
 import { notifyBreaches } from "./services/thresholds.js";
 import { sendChannel } from "./services/notifier.js";
@@ -129,6 +130,12 @@ async function main() {
     } catch (e) {
       log({ task: "backup", detail: e instanceof Error ? e.message : String(e) });
     }
+  });
+
+  // Digest email due-check (08:00 UTC; a no-op unless the customer enabled it).
+  scheduleDaily("digest", 8, async () => {
+    const r = await checkDigestDue(vault);
+    log({ task: "digest", ...r });
   });
 
   // resume stuck jobs on boot

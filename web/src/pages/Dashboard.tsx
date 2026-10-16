@@ -6,6 +6,7 @@ import {
   Button,
   InlineLoading,
   Tag,
+  ProgressBar,
   StructuredListWrapper,
   StructuredListHead,
   StructuredListRow,
@@ -13,6 +14,7 @@ import {
   StructuredListBody,
 } from "@carbon/react";
 import { AreaChart, DonutChart } from "@carbon/charts-react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAppTheme } from "../theme";
 
@@ -34,6 +36,7 @@ interface BillingSummary {
 
 export default function Dashboard() {
   const { dark } = useAppTheme();
+  const navigate = useNavigate();
   // Carbon charts bake their palette at construction and never re-theme live,
   // so pass the active theme AND remount on toggle (key) to keep colors,
   // gridlines, and tooltips matched to the page in both modes.
@@ -67,6 +70,19 @@ export default function Dashboard() {
       rates: string;
     }>;
   } | null>(null);
+  const [budgets, setBudgets] = useState<
+    Array<{
+      id: string;
+      name: string;
+      scope: string;
+      amount_usd: number;
+      is_active: boolean;
+      spend_usd: number;
+      pct: number;
+      projected_eom_usd: number;
+      on_pace_to_exceed: boolean;
+    }>
+  >([]);
   const [syncing, setSyncing] = useState(false);
 
   const load = () =>
@@ -97,8 +113,9 @@ export default function Dashboard() {
           rates: string;
         }>;
       }>("/billing/cache?days=30"),
+      api.get<{ budgets: any[] }>("/notifications/budgets"),
     ])
-      .then(([b, s, m, d, c, f, ch]) => {
+      .then(([b, s, m, d, c, f, ch, bg]) => {
         setBilling(b);
         setSeries(s.series);
         setByModel(m.by_model as any[]);
@@ -106,6 +123,7 @@ export default function Dashboard() {
         setCredit(c);
         setForecast(f);
         setCache(ch);
+        setBudgets(bg.budgets);
       })
       .catch(() => {});
 
@@ -150,6 +168,10 @@ export default function Dashboard() {
   );
 
   const s = billing?.state;
+  const activeBudgets = budgets.filter((b) => b.is_active);
+  const showBudget = activeBudgets.length
+    ? activeBudgets.reduce((a, b) => (b.pct >= a.pct ? b : a))
+    : null;
   const payments = billing?.payments ?? [];
   const paidIn = payments
     .filter((p) => p.type === "Payment")
@@ -250,6 +272,35 @@ export default function Dashboard() {
               : " · set AI credit in Settings for days-left"}
           </p>
         ) : null}
+        {showBudget && (
+          <div
+            style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginTop: "0.5rem" }}
+          >
+            <div style={{ flex: 1, maxWidth: "320px" }}>
+              <ProgressBar
+                label=""
+                hideLabel
+                value={Math.min(showBudget.pct, 100)}
+                max={100}
+                status={showBudget.pct >= 100 ? "error" : "active"}
+              />
+            </div>
+            <button
+              onClick={() => navigate("/settings")}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
+                color: "var(--cds-link-primary, #0f62fe)",
+                fontSize: "0.85rem",
+              }}
+            >
+              {showBudget.name}: {showBudget.pct.toFixed(0)}% of ${showBudget.amount_usd}
+              {showBudget.on_pace_to_exceed ? " · over pace" : ""}
+            </button>
+          </div>
+        )}
       </Column>
 
       <Column sm={4} md={8} lg={16}>
