@@ -13,6 +13,7 @@ import { routerRoutes } from "./api/routes/router.js";
 import { modelRouterRoutes } from "./api/routes/model-routers.js";
 import { modelRoutes } from "./api/routes/models.js";
 import { backupRoutes } from "./api/routes/backups.js";
+import { infrastructureRoutes } from "./api/routes/infrastructure.js";
 import { notificationRoutes } from "./api/routes/notifications.js";
 import { scheduleEvery, scheduleDaily } from "./services/scheduler.js";
 import { applyPendingRestore, createBackup, listBackups } from "./services/backup.js";
@@ -73,7 +74,7 @@ async function main() {
   protectedApp.route("/models", modelRoutes(vault));
   protectedApp.route("/notifications", notificationRoutes(vault));
   protectedApp.route("/backups", backupRoutes(DATA_DIR));
-  app.route("/api/v1", protectedApp);
+  protectedApp.route("/infrastructure", infrastructureRoutes(vault));  app.route("/api/v1", protectedApp);
 
   // ---- static SPA ----
   const here = path.dirname(fileURLToPath(import.meta.url));

@@ -114,6 +114,7 @@ function migrate(d: DatabaseSync) {
     sku TEXT NOT NULL,
     model_key TEXT NOT NULL,
     description TEXT NOT NULL,
+    region TEXT NOT NULL DEFAULT '',
     prompt_tokens INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     amount_usd REAL NOT NULL,
@@ -220,9 +221,9 @@ function migrate(d: DatabaseSync) {
   addColumnIfMissing(d, "telemetry_logs", "task", "TEXT");
   addColumnIfMissing(d, "telemetry_hourly", "router", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(d, "telemetry_hourly", "task", "TEXT NOT NULL DEFAULT ''");
-  addColumnIfMissing(d, "app_settings", "ai_credit_remaining", "REAL");
   addColumnIfMissing(d, "app_settings", "ai_credit_as_of", "TEXT");
   addColumnIfMissing(d, "model_rates", "cache_per_1m", "REAL");
+  addColumnIfMissing(d, "billing_daily", "region", "TEXT NOT NULL DEFAULT ''");
 
   // SQLite cannot ALTER a CHECK constraint: rebuild thresholds once to widen
   // the metric set for Phase-2 spike metrics. Existing rows are preserved.

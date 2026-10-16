@@ -21,6 +21,7 @@ import Dashboard from "./pages/Dashboard";
 import RouterPage from "./pages/RouterPage";
 import ModelsPage from "./pages/ModelsPage";
 import SettingsPage from "./pages/SettingsPage";
+import InfrastructurePage from "./pages/InfrastructurePage";
 
 function useSetupStatus() {
   const [status, setStatus] = useState<{ setup_complete: boolean; admin_created: boolean } | null>(
@@ -93,6 +94,7 @@ function Shell() {
         <HeaderNavigation aria-label="Main">
           <HeaderMenuItem onClick={() => navigate("/")}>Home</HeaderMenuItem>
           <HeaderMenuItem onClick={() => navigate("/")}>Dashboard</HeaderMenuItem>
+          <HeaderMenuItem onClick={() => navigate("/infrastructure")}>Infrastructure</HeaderMenuItem>
           <HeaderMenuItem onClick={() => navigate("/router")}>Router</HeaderMenuItem>
           <HeaderMenuItem onClick={() => navigate("/models")}>Models</HeaderMenuItem>
           <HeaderMenuItem onClick={() => navigate("/settings")}>Settings</HeaderMenuItem>
@@ -116,6 +118,7 @@ function Shell() {
           <SideNavItems>
             <SideNavLink onClick={() => navigate("/")}>Home</SideNavLink>
             <SideNavLink onClick={() => navigate("/")}>Dashboard</SideNavLink>
+            <SideNavLink onClick={() => navigate("/infrastructure")}>Infrastructure</SideNavLink>
             <SideNavLink onClick={() => navigate("/router")}>Router Rules</SideNavLink>
             <SideNavLink onClick={() => navigate("/models")}>Model Registry</SideNavLink>
             <SideNavLink onClick={() => navigate("/settings")}>Settings & Alerts</SideNavLink>
@@ -127,6 +130,7 @@ function Shell() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/router" element={<RouterPage />} />
           <Route path="/models" element={<ModelsPage />} />
+          <Route path="/infrastructure" element={<InfrastructurePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

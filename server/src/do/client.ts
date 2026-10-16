@@ -106,6 +106,17 @@ export interface AccountInfo {
   status?: string;
 }
 
+/** Subset of a DigitalOcean droplet (inventory display only). */
+export interface Droplet {
+  id: number;
+  name: string;
+  status?: string;
+  region?: string;
+  size?: string;
+  created_at?: string;
+  tags?: string[];
+}
+
 /** One entry from GET /v2/customers/my/billing_history (payments, invoices...). */
 export interface BillingHistoryEntry {
   description: string;
@@ -301,6 +312,38 @@ export class DOClient {
       `/v2/gen-ai/models/routers/${encodeURIComponent(uuid)}`
     );
     if (status >= 400) throw new DOError(status, text);
+  }
+
+  // ---- core compute: droplet inventory (read-only) ----
+  async listDroplets(): Promise<Droplet[]> {
+    const out: Droplet[] = [];
+    let page = 1;
+    for (;;) {
+      const { status, json, text } = await req(
+        CTRL,
+        this.ctrlToken,
+        "GET",
+        `/v2/droplets?per_page=200&page=${page}`
+      );
+      if (status === 404) return out;
+      const j = expect(status, json, text);
+      for (const d of j.droplets ?? []) {
+        out.push({
+          id: d.id,
+          name: d.name,
+          status: d.status,
+          region: d.region?.slug ?? d.region,
+          size: d.size_slug ?? d.size,
+          created_at: d.created_at,
+          tags: d.tags ?? [],
+        });
+      }
+      const pages = j.meta?.total ?? 1;
+      if (page >= pages || (j.droplets ?? []).length === 0) break;
+      page++;
+      if (page > 50) break; // sanity cap
+    }
+    return out;
   }
 
   // ---- inference plane ----

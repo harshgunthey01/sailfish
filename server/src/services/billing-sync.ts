@@ -216,10 +216,11 @@ function round6(n: number): number {
 /** Persist one insights pull into billing_daily (idempotent upsert). */
 export function writeBillingDaily(db: ReturnType<typeof getDb>, points: BillingDataPoint[]) {
   const upsert = db.prepare(
-    `INSERT INTO billing_daily (day, sku, model_key, description, prompt_tokens, completion_tokens, amount_usd)
-     VALUES (?,?,?,?,?,?,?)
+    `INSERT INTO billing_daily (day, sku, model_key, description, region, prompt_tokens, completion_tokens, amount_usd)
+     VALUES (?,?,?,?,?,?,?,?)
      ON CONFLICT(day, sku, description) DO UPDATE SET
        model_key = excluded.model_key,
+       region = excluded.region,
        prompt_tokens = excluded.prompt_tokens,
        completion_tokens = excluded.completion_tokens,
        amount_usd = excluded.amount_usd`
@@ -234,6 +235,7 @@ export function writeBillingDaily(db: ReturnType<typeof getDb>, points: BillingD
       p.sku ?? "",
       modelKeyOf(p, bucket),
       p.description ?? "",
+      p.region ?? "",
       pt,
       ct,
       round6(parseFloat(p.total_amount) || 0)
@@ -379,6 +381,45 @@ export function dailySpike(db: ReturnType<typeof getDb>): { today: number; ratio
   const today = round6(todayRow.total);
   const ratio = meanRow.mean > 0 ? round6(today / meanRow.mean) : null;
   return { today, ratio };
+}
+
+/** Month-to-date core-compute attribution by droplet region (MONITORING.md Phase 5).
+ *  A region's spend is attributed only when exactly one droplet lives there;
+ *  everything else stays under shared/unattributed — never forced. */
+export function coreAttribution(droplets: Array<{ name: string; region?: string }>) {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT region, COALESCE(SUM(amount_usd), 0) AS amount FROM billing_daily
+       WHERE day >= date('now', 'start of month') AND model_key = 'core'
+       GROUP BY region`
+    )
+    .all() as Array<{ region: string; amount: number }>;
+  const byRegion = new Map<string, string[]>();
+  for (const d of droplets) {
+    const list = byRegion.get(d.region ?? "") ?? [];
+    list.push(d.name);
+    byRegion.set(d.region ?? "", list);
+  }
+  const regions = rows.map((r) => {
+    const names = byRegion.get(r.region ?? "") ?? [];
+    return {
+      region: r.region || "(unknown)",
+      amount_usd: round6(r.amount),
+      droplets: names,
+      attributed: names.length === 1,
+    };
+  });
+  const attributed = round6(regions.filter((r) => r.attributed).reduce((s, r) => s + r.amount_usd, 0));
+  const total = round6(regions.reduce((s, r) => s + r.amount_usd, 0));
+  const state = db.prepare("SELECT core_compute_mtd FROM billing_state WHERE id='singleton'").get() as any;
+  return {
+    regions,
+    attributed_usd: attributed,
+    unattributed_usd: round6(total - attributed),
+    total_usd: total,
+    core_compute_mtd: state?.core_compute_mtd ?? 0,
+  };
 }
 
 /** Month-end projection + days of manual credit left (MONITORING.md §A2). */
