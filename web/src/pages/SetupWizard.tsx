@@ -11,6 +11,7 @@ import {
   Checkbox,
 } from "@carbon/react";
 import { api } from "../api";
+import { useToast } from "../toast";
 
 interface Props {
   needLogin: boolean;
@@ -23,7 +24,12 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
 
   const [step, setStep] = useState(needLogin ? -1 : 0);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ kind: "error" | "success"; text: string } | null>(null);
+  const toast = useToast();
+  // Adapter: legacy setNotice call sites become bottom-right toasts.
+  const setNotice = (n: { kind: "error" | "success"; text: string } | null) => {
+    if (!n) return;
+    toast[n.kind](n.text);
+  };
 
   // step 1
   const [email, setEmail] = useState("");
@@ -85,7 +91,10 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
     try {
       await fn();
     } catch (e: any) {
-      setNotice({ kind: "error", text: e?.message ?? String(e) });
+      setNotice({
+        kind: "error",
+        text: e?.body?.error ?? e?.body?.detail ?? e?.message ?? String(e),
+      });
     } finally {
       setBusy(false);
     }
@@ -107,16 +116,6 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
           <ProgressStep label="Notifications" description="SMTP & webhooks (optional)" />
           <ProgressStep label="DigitalOcean" description="Connect your API keys" />
         </ProgressIndicator>
-      )}
-
-      {notice && (
-        <InlineNotification
-          kind={notice.kind}
-          title={notice.kind === "error" ? "Error" : "OK"}
-          subtitle={notice.text}
-          lowContrast
-          style={{ marginBottom: "1rem" }}
-        />
       )}
 
       {step === -1 && authMode === "login" && (

@@ -23,6 +23,7 @@ import {
   type RouterPayload,
   type RouterPolicy,
 } from "../api";
+import { useToast } from "../toast";
 
 interface Rule {
   id: string;
@@ -48,7 +49,7 @@ export default function RouterPage() {
   const [remote, setRemote] = useState<RemoteModelRouter[]>([]);
   const [loadingRemote, setLoadingRemote] = useState(true);
   const [remoteError, setRemoteError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const toast = useToast();
   const [saving, setSaving] = useState(false);
   const [editingUuid, setEditingUuid] = useState<string | null>(null);
 
@@ -76,7 +77,7 @@ export default function RouterPage() {
         setRemote(r.routers);
         setRemoteError(null);
       })
-      .catch((e) => setRemoteError(e?.body?.error ?? e?.message ?? "Failed to load routers"))
+      .catch((e) => setRemoteError(e?.body?.error ?? e?.body?.detail ?? e?.message ?? "Failed to load routers"))
       .finally(() => setLoadingRemote(false));
 
   const loadLocal = () =>
@@ -125,10 +126,7 @@ export default function RouterPage() {
 
   function startEdit(r: RemoteModelRouter) {
     if (isManagedRouter(r)) {
-      setNotice({
-        kind: "error",
-        text: `“${r.name}” is managed by DigitalOcean and cannot be edited.`,
-      });
+      toast.error(`“${r.name}” is managed by DigitalOcean and cannot be edited.`);
       return;
     }
     setEditingUuid(r.uuid);
@@ -141,7 +139,6 @@ export default function RouterPage() {
       prefer: p.selection_policy?.prefer ?? "cheapest",
     }));
     setPolicies(ps.length ? ps : [emptyPolicy()]);
-    setNotice(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -173,23 +170,22 @@ export default function RouterPage() {
   async function submit() {
     const payload = buildPayload();
     if ("error" in payload) {
-      setNotice({ kind: "error", text: payload.error });
+      toast.error(payload.error);
       return;
     }
     setSaving(true);
-    setNotice(null);
     try {
       if (editingUuid) {
         await routerApi.update(editingUuid, payload);
-        setNotice({ kind: "success", text: `Updated router “${payload.name}”.` });
+        toast.success(`Updated router “${payload.name}”.`);
       } else {
         await routerApi.create(payload);
-        setNotice({ kind: "success", text: `Created router “${payload.name}”.` });
+        toast.success(`Created router “${payload.name}”.`);
       }
       resetForm();
       await loadRemote();
     } catch (e: any) {
-      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Save failed" });
+      toast.error(e?.body?.error ?? e?.body?.detail ?? e?.message ?? "Save failed");
     } finally {
       setSaving(false);
     }
@@ -198,20 +194,17 @@ export default function RouterPage() {
   async function remove(uuid: string, routerName: string) {
     const target = remote.find((r) => r.uuid === uuid);
     if (target && isManagedRouter(target)) {
-      setNotice({
-        kind: "error",
-        text: `“${routerName}” is managed by DigitalOcean and cannot be deleted.`,
-      });
+      toast.error(`“${routerName}” is managed by DigitalOcean and cannot be deleted.`);
       return;
     }
     if (!window.confirm(`Delete model router “${routerName}”? This cannot be undone.`)) return;
     try {
       await routerApi.remove(uuid);
-      setNotice({ kind: "success", text: `Deleted router “${routerName}”.` });
+      toast.success(`Deleted router “${routerName}”.`);
       if (editingUuid === uuid) resetForm();
       await loadRemote();
     } catch (e: any) {
-      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Delete failed" });
+      toast.error(e?.body?.error ?? e?.body?.detail ?? e?.message ?? "Delete failed");
     }
   }
 
@@ -231,19 +224,6 @@ export default function RouterPage() {
           </p>
         )}
       </Column>
-
-      {notice && (
-        <Column sm={4} md={8} lg={16}>
-          <InlineNotification
-            lowContrast
-            kind={notice.kind}
-            title={notice.kind === "success" ? "Done" : "Error"}
-            subtitle={notice.text}
-            onCloseButtonClick={() => setNotice(null)}
-            style={{ marginBottom: "1rem" }}
-          />
-        </Column>
-      )}
 
       {/* ---------- create / edit form ---------- */}
       <Column sm={4} md={8} lg={16} className="sf-section">

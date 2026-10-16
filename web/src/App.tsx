@@ -15,6 +15,7 @@ import {
 } from "@carbon/react";
 import { Asleep, Awake, Menu } from "@carbon/icons-react";
 import { ThemeProvider, useAppTheme } from "./theme";
+import { ToastProvider } from "./toast";
 import { api } from "./api";
 import SetupWizard from "./pages/SetupWizard";
 import Dashboard from "./pages/Dashboard";
@@ -142,9 +143,11 @@ function Shell() {
 export default function App() {
   return (
     <ThemeProvider>
-      <BrowserRouter>
-        <Shell />
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <Shell />
+        </BrowserRouter>
+      </ToastProvider>
     </ThemeProvider>
   );
 }

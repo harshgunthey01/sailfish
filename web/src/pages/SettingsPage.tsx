@@ -19,6 +19,7 @@ import {
   ProgressBar,
 } from "@carbon/react";
 import { api } from "../api";
+import { useToast } from "../toast";
 
 interface Threshold {
   id: string;
@@ -33,7 +34,12 @@ interface Threshold {
 export default function SettingsPage() {
   const [log, setLog] = useState<any[]>([]);
   const [thresholds, setThresholds] = useState<Threshold[]>([]);
-  const [notice, setNotice] = useState<{ kind: "error" | "success"; text: string } | null>(null);
+  const toast = useToast();
+  // Adapter: legacy setNotice call sites become bottom-right toasts.
+  const setNotice = (n: { kind: "error" | "success"; text: string } | null) => {
+    if (!n) return;
+    toast[n.kind](n.text);
+  };
   const [busy, setBusy] = useState(false);
 
   // ---- administrator ----
@@ -207,11 +213,12 @@ export default function SettingsPage() {
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
-    setNotice(null);
     try {
       await fn();
     } catch (e: any) {
-      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? String(e) });
+      // ApiError carries server JSON in .body: prefer its error/detail fields
+      // over the generic "HTTP <status>" message.
+      toast.error(e?.body?.error ?? e?.body?.detail ?? e?.message ?? String(e));
     } finally {
       setBusy(false);
     }
@@ -231,15 +238,6 @@ export default function SettingsPage() {
     <Grid narrow className="sf-content">
       <Column sm={4} md={8} lg={16}>
         <h3>Settings</h3>
-        {notice && (
-          <InlineNotification
-            kind={notice.kind}
-            title={notice.kind === "error" ? "Error" : "OK"}
-            subtitle={notice.text}
-            lowContrast
-            style={{ margin: "0.5rem 0" }}
-          />
-        )}
       </Column>
 
       {/* ---------- administrator (onboarding step 1) ---------- */}

@@ -13,11 +13,11 @@ import {
   Modal,
   CodeSnippet,
   InlineLoading,
-  InlineNotification,
   TextInput,
   Search,
 } from "@carbon/react";
 import { api } from "../api";
+import { useToast } from "../toast";
 
 interface Managed {
   id: string;
@@ -48,6 +48,7 @@ interface ModelRate {
 const PAGE_SIZE = 100;
 
 export default function ModelsPage() {
+  const toast = useToast();
   const [managed, setManaged] = useState<Managed[]>([]);
   const [available, setAvailable] = useState<AvailableModel[]>([]);
   const [source, setSource] = useState("cache");
@@ -56,7 +57,6 @@ export default function ModelsPage() {
   const [output, setOutput] = useState<string | null>(null);
   const [newModel, setNewModel] = useState("");
   const [filter, setFilter] = useState("");
-  const [notice, setNotice] = useState<{ kind: "error" | "success"; text: string } | null>(null);
 
   const load = () =>
     Promise.all([
@@ -70,7 +70,7 @@ export default function ModelsPage() {
         setRates(m.rates ?? []);
       })
       .catch((e: any) =>
-        setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Failed to load models" })
+        toast.error(e?.body?.error ?? e?.body?.detail ?? e?.message ?? "Failed to load models")
       );
 
   // Poll fast only while a provisioning job is in flight; idle otherwise.
@@ -103,10 +103,10 @@ export default function ModelsPage() {
     try {
       await api.post("/models", { model_name: name });
       setNewModel("");
-      setNotice({ kind: "success", text: `Provisioning started for “${name}”.` });
+      toast.success(`Provisioning started for “${name}”.`);
       load();
     } catch (e: any) {
-      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Add failed" });
+      toast.error(e?.body?.error ?? e?.body?.detail ?? e?.message ?? "Add failed");
     }
   };
 
@@ -117,7 +117,7 @@ export default function ModelsPage() {
       load();
       setTimeout(load, 1500);
     } catch (e: any) {
-      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Update failed" });
+      toast.error(e?.body?.error ?? e?.body?.detail ?? e?.message ?? "Update failed");
     }
   };
 
@@ -125,10 +125,10 @@ export default function ModelsPage() {
     if (!window.confirm(`Retire “${name}” from the fleet? It will be removed entirely.`)) return;
     try {
       await api.delete(`/models/${encodeURIComponent(name)}/retire`);
-      setNotice({ kind: "success", text: `Retired “${name}”.` });
+      toast.success(`Retired “${name}”.`);
       load();
     } catch (e: any) {
-      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Retire failed" });
+      toast.error(e?.body?.error ?? e?.body?.detail ?? e?.message ?? "Retire failed");
     }
   };
 
@@ -149,16 +149,6 @@ export default function ModelsPage() {
             Cheapest observed input: <strong>{cheapest.model_key}</strong> @ $
             {cheapest.input_per_1m}/1M tokens (from your bills)
           </p>
-        )}
-        {notice && (
-          <InlineNotification
-            kind={notice.kind}
-            title={notice.kind === "error" ? "Error" : "OK"}
-            subtitle={notice.text}
-            lowContrast
-            onCloseButtonClick={() => setNotice(null)}
-            style={{ margin: "0.5rem 0" }}
-          />
         )}
       </Column>
 
