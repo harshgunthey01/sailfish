@@ -262,3 +262,113 @@ them into an inventory.
    tables that look broken.
 2. Attributed + unattributed core spend sums exactly to `core_compute_mtd`.
 3. No write endpoints: page performs zero state-changing DO calls.
+
+---
+
+## Phase 6 — Budget envelopes (specified, not built)
+
+**Why:** thresholds today are single tripwires; FinOps runs on monthly
+envelopes with progressive alerts. All inputs already exist (MTD buckets,
+forecast rate, notify/cooldown engine).
+
+### Schema
+
+```sql
+CREATE TABLE budgets (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,                       -- e.g. "AI inference — Oct"
+  scope TEXT NOT NULL CHECK (scope IN ('ai','core','total')),
+  amount_usd REAL NOT NULL CHECK (amount_usd > 0),
+  alerts_json TEXT NOT NULL DEFAULT '[50,80,100]',  -- pct levels, ascending
+  channels_json TEXT NOT NULL DEFAULT '["smtp"]',
+  fired_json TEXT NOT NULL DEFAULT '[]',    -- levels already fired this month
+  fired_month TEXT NOT NULL DEFAULT '',     -- 'YYYY-MM' the fired list belongs to
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+### Spend basis (locked)
+
+- `ai` → `billing_state.ai_usage_mtd`
+- `core` → `billing_state.core_compute_mtd`
+- `total` → ai + core + `tax_mtd` (tax is billed, so it's inside the envelope)
+
+### Evaluation (inside `syncBilling`, after the threshold pass)
+
+1. For each active budget: `pct = spend / amount × 100`.
+2. Month rollover: if `fired_month != current YYYY-MM`, clear `fired_json`.
+3. For each level in `alerts_json` ascending: if `pct >= level` and level not
+   in `fired_json`, record breach message
+   `"${name}: ${pct}% of $X budget ($spend)"`, append level, persist.
+4. Breaches fan out through the existing `notifyBreaches` + per-budget
+   `channels_json` (extend the channel query to union budget channels).
+5. Cooldown is inherent (a level fires once per month); `cooldown_minutes`
+   does not apply.
+
+### API
+
+- `GET /budgets` → budgets with live `spend_usd`, `pct`, `projected_eom_usd`
+  (rate × days-left, reusing the forecast math) and `on_pace` flag
+  (`projected > amount`).
+- `POST /budgets {name, scope, amount_usd, alerts?, channels?}` (validate:
+  amount > 0, scope known, alerts ascending 1–100).
+- `DELETE /budgets/:id`.
+
+### UI
+
+- Settings "Monthly budgets" section: create form + list with per-budget
+  progress bar (`ProgressBar`), pace note ("on pace to exceed by $X" from
+  `projected_eom_usd`), delete.
+- Dashboard: one compact budget bar under the forecast strip for the first
+  active budget (or the worst pace), linking to Settings.
+
+### Acceptance
+
+1. Each level notifies exactly once per month (log shows 50/80/100 each once).
+2. Month rollover clears `fired_json` (verify by backdating in a test copy).
+3. `spend` hand-matches the tile buckets; `pct` = spend/amount exactly.
+
+---
+
+## Phase 7 — Weekly digest email (specified, not built)
+
+**Why:** cadence beats dashboards — the numbers should reach the inbox
+without opening the app. All content already exists as endpoints/functions.
+
+### Content (one builder, `buildDigest()` in `notifier.ts` or new `digest.ts`)
+
+1. MTD spend by bucket (ai / core / tax) + vs last month same-day (from
+   `billing_daily`; "insufficient history" until 2 months exist).
+2. Top model 7d + biggest mover (share change vs prior 7d).
+3. Forecast line (reuse `forecastSummary()`) + budget pace (Phase 6).
+4. Cache ratio + est. savings (reuse `cacheSummary()`).
+5. Anomalies: current spike ratio + any thresholds fired in the last 7d
+   (from `notification_log`).
+6. Credit remaining + as-of date.
+
+Plaintext first (reliable everywhere); HTML is a later enhancement, not v1.
+
+### Delivery
+
+- Sundays 08:00 UTC: reuse `scheduleDaily` with a weekday guard (no
+  scheduler changes). Recipient = admin email from `admins`.
+- Requires SMTP: without it, skip + `logNotification("smtp", "digest",
+  "skipped", "smtp not configured")`. Never throw from the scheduled job.
+- `POST /notifications/digest/test` sends immediately (for the Settings
+  test button); result logged like any notification.
+
+### Settings UI + API
+
+- "Weekly digest" section: enable `Checkbox`, test-send button.
+- `GET /notifications/digest` → `{ enabled }`;
+  `POST /notifications/digest { enabled }` (persisted in
+  `app_extras.settings_json` under `digest`, alongside SMTP settings).
+- Default: disabled until explicitly enabled (no surprise email).
+
+### Acceptance
+
+1. Test-send arrives with all six sections and correct numbers (spot-check
+   each against its source endpoint).
+2. Auto-send fires on Sunday, appears once in `notification_log`.
+3. With SMTP unconfigured: skipped + logged, no crash, no retry storm.
