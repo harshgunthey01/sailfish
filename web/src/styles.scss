@@ -10,6 +10,15 @@ body,
   margin: 0;
 }
 
+// Theme the entire page (viewport, overscroll, full-bleed areas) using the
+// runtime CSS custom properties so dark and light mode both cover everything.
+// The active theme class (.cds--g100 / .cds--g10) is set on <html> by theme.tsx.
+html,
+body {
+  background-color: var(--cds-background, #ffffff);
+  color: var(--cds-text-primary, #161616);
+}
+
 .sf-content {
   padding: 1rem;
   max-width: 1200px;

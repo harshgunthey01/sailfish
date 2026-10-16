@@ -43,6 +43,11 @@ function migrate(d: DatabaseSync) {
   CREATE TABLE IF NOT EXISTS billing_state (
     id TEXT PRIMARY KEY,
     compute_balance REAL NOT NULL DEFAULT 0,
+    core_compute_mtd REAL NOT NULL DEFAULT 0,
+    ai_usage_mtd REAL NOT NULL DEFAULT 0,
+    tax_mtd REAL NOT NULL DEFAULT 0,
+    account_balance REAL NOT NULL DEFAULT 0,
+    breakdown_json TEXT,
     inference_balance REAL NOT NULL DEFAULT 0,
     is_blocked INTEGER NOT NULL DEFAULT 0,
     last_synced TEXT NOT NULL
@@ -90,6 +95,8 @@ function migrate(d: DatabaseSync) {
     id TEXT PRIMARY KEY,
     ts TEXT NOT NULL,
     compute_balance REAL NOT NULL,
+    core_compute_mtd REAL NOT NULL DEFAULT 0,
+    ai_usage_mtd REAL NOT NULL DEFAULT 0,
     inference_balance REAL NOT NULL,
     spend_limit REAL
   );
@@ -155,6 +162,22 @@ function migrate(d: DatabaseSync) {
   INSERT OR IGNORE INTO billing_state (id, compute_balance, inference_balance, is_blocked, last_synced)
   VALUES ('singleton', 0, 0, 0, datetime('now'));
   `);
+
+  // ---- incremental migrations (bring older DBs up to date) ----
+  addColumnIfMissing(d, "billing_state", "core_compute_mtd", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(d, "billing_state", "ai_usage_mtd", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(d, "billing_state", "tax_mtd", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(d, "billing_state", "account_balance", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(d, "billing_state", "breakdown_json", "TEXT");
+  addColumnIfMissing(d, "billing_history", "core_compute_mtd", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(d, "billing_history", "ai_usage_mtd", "REAL NOT NULL DEFAULT 0");
+}
+
+function addColumnIfMissing(d: DatabaseSync, table: string, column: string, def: string) {
+  const cols = d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+  }
 }
 
 export function newId(): string {

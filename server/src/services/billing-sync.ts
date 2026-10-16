@@ -7,10 +7,21 @@ import { sendChannel } from "./notifier.js";
 
 /**
  * Billing sync (PRD §2.2, ARCHITECTURE §6.2).
- * Pulls core-compute accrued balance + prepaid inference balance and upserts the
- * billing_state singleton; appends billing_history for charts; then evaluates
- * user thresholds.
+ *
+ * Now uses the DO Billing Insights API to build a per-product breakdown,
+ * so the dashboard shows the *real* GenAI usage and not the account-wide
+ * month‑to‑date balance (which includes unrelated charges, credits, and tax).
+ *
+ * Classification rules (SKU prefix):
+ *   AI usage  → sku starts with "1-AI-"
+ *   AI credits → sku starts with "1-DO-AI"     (Agent & Inference purchases)
+ *   Tax       → sku starts with "1-DO-ADJMT-00TAX"
+ *   Credits   → total_amount < 0 (generic adjustments)
+ *   Everything else → core compute
  */
+const AI_USAGE_PREFIX = "1-AI-";
+const AI_CREDIT_PREFIX = "1-DO-AI";
+const TAX_SKU_PREFIX = "1-DO-ADJMT-00TAX";
 
 export function makeClient(vault: Vault): DOClient | null {
   const doToken = vault.get("do_token");
@@ -24,6 +35,11 @@ export interface SyncResult {
   detail: string;
   compute_balance?: number;
   inference_balance?: number;
+  /** New breakdown fields */
+  month_to_date_balance?: number;
+  core_compute_mtd?: number;
+  ai_usage_mtd?: number;
+  tax_mtd?: number;
 }
 
 export async function syncBilling(vault: Vault): Promise<SyncResult> {
@@ -37,6 +53,46 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       client.prepaymentConfig().catch(() => null),
     ]);
 
+    // ---- per-product breakdown via Billing Insights ----
+    let coreComputeMtd = 0;
+    let aiUsageMtd = 0;
+    let taxMtd = 0;
+    let breakdownJson: string | null = null;
+
+    try {
+      const acct = await client.account();
+      const teamUuid = acct.team_uuid;
+      if (teamUuid) {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), 1)
+          .toISOString()
+          .slice(0, 10);
+        const end = now.toISOString().slice(0, 10);
+        const urn = `do:team:${teamUuid}`;
+        const points = await client.billingInsights(urn, start, end);
+
+        for (const p of points) {
+          const amount = parseFloat(p.total_amount) || 0;
+          const sku = (p.sku ?? "").toUpperCase();
+          if (sku.startsWith(TAX_SKU_PREFIX)) {
+            taxMtd += amount;
+          } else if (sku.startsWith(AI_USAGE_PREFIX) || sku.startsWith(AI_CREDIT_PREFIX)) {
+            aiUsageMtd += amount;
+          } else if (amount < 0) {
+            // Credits / generic adjustments — no bucket (they reduce the bill but aren't "core compute")
+          } else {
+            coreComputeMtd += amount;
+          }
+        }
+        breakdownJson = JSON.stringify(points.slice(0, 200));
+      }
+    } catch (e) {
+      // Insights may be unavailable (new accounts, insufficient perms).
+      // Leave the breakdown at zero rather than mislabel the account-wide
+      // month_to_date_balance as core-compute spend.
+      console.warn("[billing-sync] insights unavailable:", e instanceof Error ? e.message : String(e));
+    }
+
     // inference remaining = prepaid - used (fall back to raw fields if shape differs)
     let inferenceBalance: number | null = null;
     let spendLimit: number | null = null;
@@ -47,14 +103,40 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       spendLimit = prepay.spend_limit ?? null;
     }
 
+    // Use the net month_to_date_balance from the balance endpoint as the
+    // "compute_balance" for threshold compatibility (this is the real due amount).
+    const mtd = parseFloat(String(bal.month_to_date_balance ?? 0)) || 0;
+    const acctBal = parseFloat(String(bal.account_balance ?? 0)) || 0;
+
     const ts = nowIso();
     db.prepare(
-      `UPDATE billing_state SET compute_balance = ?, inference_balance = ?, last_synced = ? WHERE id = 'singleton'`
-    ).run(bal.month_to_date_balance, inferenceBalance ?? 0, ts);
+      `UPDATE billing_state
+       SET compute_balance = ?, core_compute_mtd = ?, ai_usage_mtd = ?, tax_mtd = ?,
+           account_balance = ?, breakdown_json = ?, inference_balance = ?, last_synced = ?
+       WHERE id = 'singleton'`
+    ).run(
+      mtd,
+      round6(coreComputeMtd),
+      round6(aiUsageMtd),
+      round6(taxMtd),
+      acctBal,
+      breakdownJson,
+      inferenceBalance ?? 0,
+      ts
+    );
 
     db.prepare(
-      `INSERT INTO billing_history (id, ts, compute_balance, inference_balance, spend_limit) VALUES (?,?,?,?,?)`
-    ).run(newId(), ts, bal.month_to_date_balance, inferenceBalance ?? 0, spendLimit);
+      `INSERT INTO billing_history (id, ts, compute_balance, core_compute_mtd, ai_usage_mtd, inference_balance, spend_limit)
+       VALUES (?,?,?,?,?,?,?)`
+    ).run(
+      newId(),
+      ts,
+      mtd,
+      round6(coreComputeMtd),
+      round6(aiUsageMtd),
+      inferenceBalance ?? 0,
+      spendLimit
+    );
 
     // keep history bounded: 90 days
     db.prepare(
@@ -62,7 +144,7 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
     ).run();
 
     const breaches = evaluateThresholds({
-      compute_balance: bal.month_to_date_balance,
+      compute_balance: mtd,
       inference_balance: inferenceBalance ?? 0,
       spend_limit: spendLimit,
     });
@@ -73,8 +155,12 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
     return {
       ok: true,
       detail: "synced",
-      compute_balance: bal.month_to_date_balance,
+      compute_balance: mtd,
       inference_balance: inferenceBalance ?? 0,
+      month_to_date_balance: mtd,
+      core_compute_mtd: round6(coreComputeMtd),
+      ai_usage_mtd: round6(aiUsageMtd),
+      tax_mtd: round6(taxMtd),
     };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
@@ -87,7 +173,8 @@ export function billingSummary() {
   const state = db.prepare("SELECT * FROM billing_state WHERE id='singleton'").get() as any;
   const recent = db
     .prepare(
-      `SELECT ts, compute_balance, inference_balance, spend_limit FROM billing_history
+      `SELECT ts, compute_balance, core_compute_mtd, ai_usage_mtd, inference_balance, spend_limit
+       FROM billing_history
        ORDER BY ts DESC LIMIT 500`
     )
     .all();

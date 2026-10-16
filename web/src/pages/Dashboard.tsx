@@ -13,6 +13,10 @@ import { api } from "../api";
 interface BillingSummary {
   state: {
     compute_balance: number;
+    core_compute_mtd?: number;
+    ai_usage_mtd?: number;
+    tax_mtd?: number;
+    account_balance?: number;
     inference_balance: number;
     is_blocked: number;
     last_synced: string;
@@ -91,11 +95,23 @@ export default function Dashboard() {
         <ClickableTile onClick={load}>
           <div className="sf-muted">Core Compute (month-to-date)</div>
           <div className="sf-stat-number">
-            ${s ? s.compute_balance.toFixed(2) : "—"}
+            ${s && s.core_compute_mtd != null ? s.core_compute_mtd.toFixed(2) : s ? s.compute_balance.toFixed(2) : "—"}
           </div>
           <div className="sf-muted">
             last synced {s ? new Date(s.last_synced).toLocaleString() : "never"}
           </div>
+        </ClickableTile>
+      </Column>
+
+      <Column sm={4} md={4} lg={5}>
+        <ClickableTile onClick={load}>
+          <div className="sf-muted">GenAI Usage (month-to-date)</div>
+          <div className="sf-stat-number">
+            ${s && s.ai_usage_mtd != null ? s.ai_usage_mtd.toFixed(2) : "—"}
+          </div>
+          {s && s.tax_mtd != null && s.tax_mtd > 0 && (
+            <div className="sf-muted">incl. tax ${s.tax_mtd.toFixed(2)}</div>
+          )}
         </ClickableTile>
       </Column>
 

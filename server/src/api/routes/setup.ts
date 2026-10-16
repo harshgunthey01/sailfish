@@ -168,8 +168,9 @@ export function setupRoutes(vault: Vault): Hono {
 
   gated.post("/complete", (c) => {
     const s = getDb().prepare("SELECT * FROM app_settings WHERE id='singleton'").get() as any;
-    if (!adminExists() || !s.smtp_configured || !s.do_auth_configured)
-      return c.json({ error: "all steps must be completed first" }, 400);
+    // Notifications are optional; admin + DigitalOcean credentials are required.
+    if (!adminExists() || !s.do_auth_configured)
+      return c.json({ error: "admin account and DigitalOcean credentials are required" }, 400);
     getDb().prepare("UPDATE app_settings SET setup_complete = 1 WHERE id='singleton'").run();
     return c.json({ ok: true });
   });

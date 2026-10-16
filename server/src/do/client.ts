@@ -82,6 +82,60 @@ export interface DOModel {
   download_tokens?: string;
 }
 
+// ---- billing insights (per-SKU day-over-day usage) ----
+export interface BillingDataPoint {
+  usage_team_urn: string;
+  start_date: string;
+  total_amount: string;
+  region: string;
+  sku: string;
+  description: string;
+  group_description?: string;
+}
+export interface AccountInfo {
+  uuid?: string;
+  email?: string;
+  name?: string;
+  team_uuid?: string;
+  team_name?: string;
+  status?: string;
+}
+
+// ---- GenAI Model Routers (control plane: /v2/gen-ai/models/routers) ----
+export interface ModelRouterSelectionPolicy {
+  prefer?: "none" | "cheapest" | "fastest" | string;
+}
+export interface ModelRouterTaskDetails {
+  name?: string;
+  description?: string;
+}
+export interface ModelRouterTaskPolicy {
+  task_slug?: string;
+  models?: string[];
+  selection_policy?: ModelRouterSelectionPolicy;
+  custom_task?: ModelRouterTaskDetails;
+}
+export interface ModelRouterConfig {
+  fallback_models?: string[];
+  policies?: ModelRouterTaskPolicy[];
+}
+export interface ModelRouter {
+  uuid: string;
+  name: string;
+  description?: string;
+  regions?: string[];
+  created_at?: string;
+  updated_at?: string;
+  config?: ModelRouterConfig;
+}
+export interface ModelRouterInput {
+  name: string;
+  description?: string;
+  fallback_models: string[];
+  policies?: ModelRouterTaskPolicy[];
+  regions?: string[];
+}
+
 export class DOClient {
   constructor(
     private ctrlToken: string,
@@ -117,6 +171,39 @@ export class DOClient {
     };
   }
 
+  /** Account identity + team UUID (used to build the billing-insights URN). */
+  async account(): Promise<AccountInfo> {
+    const { status, json, text } = await req(CTRL, this.ctrlToken, "GET", "/v2/account");
+    const j = expect(status, json, text);
+    const a = j.account ?? j;
+    return {
+      uuid: a.uuid,
+      email: a.email,
+      name: a.name,
+      team_uuid: a.team?.uuid,
+      team_name: a.team?.name,
+      status: a.status,
+    };
+  }
+
+  /**
+   * Day-over-day per-SKU billing insight lines (nightly invoice-item estimates).
+   * Returns the raw data points; classification into core-compute vs AI vs tax
+   * happens in the billing service.
+   */
+  async billingInsights(
+    accountUrn: string,
+    startDate: string,
+    endDate: string
+  ): Promise<BillingDataPoint[]> {
+    const path = `/v2/billing/${encodeURIComponent(accountUrn)}/insights/${startDate}/${endDate}?per_page=200`;
+    const { status, json, text } = await req(CTRL, this.ctrlToken, "GET", path);
+    if (status === 404) return [];
+    const j = expect(status, json, text);
+    return (j.data_points ?? []) as BillingDataPoint[];
+  }
+
+  /** Open / upcoming invoices for the billing history widget. */
   async openInvoices(): Promise<Array<{ invoice_id: string; amount: string; period: string }>> {
     const { status, json, text } = await req(CTRL, this.ctrlToken, "GET", "/v2/customers/my/invoices?per_page=5");
     if (status === 404) return [];
@@ -128,6 +215,62 @@ export class DOClient {
         amount: i.invoice_amount ?? i.amount ?? "0",
         period: i.invoice_period ?? "",
       }));
+  }
+
+  // ---- GenAI model routers (control plane) ----
+  async listModelRouters(): Promise<ModelRouter[]> {
+    const { status, json, text } = await req(
+      CTRL,
+      this.ctrlToken,
+      "GET",
+      "/v2/gen-ai/models/routers?per_page=200"
+    );
+    const j = expect(status, json, text);
+    return (j.model_routers ?? []) as ModelRouter[];
+  }
+
+  async getModelRouter(uuid: string): Promise<ModelRouter> {
+    const { status, json, text } = await req(
+      CTRL,
+      this.ctrlToken,
+      "GET",
+      `/v2/gen-ai/models/routers/${encodeURIComponent(uuid)}`
+    );
+    return expect(status, json, text).model_router as ModelRouter;
+  }
+
+  async createModelRouter(input: ModelRouterInput): Promise<ModelRouter> {
+    const { status, json, text } = await req(
+      CTRL,
+      this.ctrlToken,
+      "POST",
+      "/v2/gen-ai/models/routers",
+      input
+    );
+    const j = expect(status, json, text);
+    return (j.model_router ?? j) as ModelRouter;
+  }
+
+  async updateModelRouter(uuid: string, input: ModelRouterInput): Promise<ModelRouter> {
+    const { status, json, text } = await req(
+      CTRL,
+      this.ctrlToken,
+      "PUT",
+      `/v2/gen-ai/models/routers/${encodeURIComponent(uuid)}`,
+      input
+    );
+    const j = expect(status, json, text);
+    return (j.model_router ?? j) as ModelRouter;
+  }
+
+  async deleteModelRouter(uuid: string): Promise<void> {
+    const { status, text } = await req(
+      CTRL,
+      this.ctrlToken,
+      "DELETE",
+      `/v2/gen-ai/models/routers/${encodeURIComponent(uuid)}`
+    );
+    if (status >= 400) throw new DOError(status, text);
   }
 
   // ---- inference plane ----

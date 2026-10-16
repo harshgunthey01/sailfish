@@ -18,6 +18,9 @@ interface Props {
 }
 
 export default function SetupWizard({ needLogin, onDone }: Props) {
+  // The wizard is shown only when the app is NOT set up.
+  // `needLogin` is true only when the user already has an admin account (so they just need to sign in).
+
   const [step, setStep] = useState(needLogin ? -1 : 0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "error" | "success"; text: string } | null>(null);
@@ -56,12 +59,19 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
 
   return (
     <div className="sf-wizard">
-      <h2 style={{ marginBottom: "1rem" }}>Sailfish Setup</h2>
+      <h2 style={{ marginBottom: "0.25rem" }}>
+        {needLogin ? "Welcome back" : "Welcome to Sailfish"}
+      </h2>
+      <p className="sf-muted" style={{ marginBottom: "1.5rem" }}>
+        {needLogin
+          ? "Sign in with the administrator account you created during setup."
+          : "First-run setup. We'll walk you through creating your admin account, connecting notifications, and linking DigitalOcean. Takes about 2 minutes."}
+      </p>
       {!needLogin && (
         <ProgressIndicator currentIndex={step} style={{ marginBottom: "2rem" }}>
-          <ProgressStep label="Admin" description="Create root account" />
-          <ProgressStep label="Notifications" description="SMTP & webhooks" />
-          <ProgressStep label="DigitalOcean" description="API credentials" />
+          <ProgressStep label="Admin account" description="Create your login" />
+          <ProgressStep label="Notifications" description="SMTP & webhooks (optional)" />
+          <ProgressStep label="DigitalOcean" description="Connect your API keys" />
         </ProgressIndicator>
       )}
 
@@ -108,16 +118,21 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
 
       {step === 0 && (
         <div>
+          <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+            Choose the email and password <strong>you</strong> will use to sign in to
+            this dashboard. This creates your administrator account — you're not
+            signing into anything yet.
+          </p>
           <TextInput
             id="admin-email"
-            labelText="Admin email"
+            labelText="Your email (becomes your login)"
             value={email}
             onChange={(e: any) => setEmail(e.target.value)}
             style={{ marginBottom: "1rem" }}
           />
           <PasswordInput
             id="admin-pass"
-            labelText="Password (min 8 chars)"
+            labelText="Choose a password (min 8 chars)"
             value={password}
             onChange={(e: any) => setPassword(e.target.value)}
             style={{ marginBottom: "1rem" }}
@@ -132,7 +147,7 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
               })
             }
           >
-            {busy ? <InlineLoading /> : "Create admin & continue"}
+            {busy ? <InlineLoading /> : "Create account & continue"}
           </Button>
         </div>
       )}
@@ -187,12 +202,23 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
             >
               {busy ? <InlineLoading /> : "Save & continue"}
             </Button>
+            <Button kind="ghost" disabled={busy} onClick={() => setStep(2)}>
+              Skip for now
+            </Button>
           </div>
         </div>
       )}
 
       {step === 2 && (
         <div>
+          <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+            Two keys are needed. You can find or generate them from your
+            DigitalOcean account panel:
+          </p>
+          <ul className="sf-muted" style={{ marginBottom: "1rem", paddingLeft: "1.2rem" }}>
+            <li><strong>OAuth token</strong> — API → Tokens/Keys → Generate New Token (read + write for billing access to /v2/customers/my/balance)</li>
+            <li><strong>$MODEL_ACCESS_KEY</strong> — API → Inference → Model Access Key (for /v1/models and inference APIs)</li>
+          </ul>
           <PasswordInput id="do-token" labelText="DigitalOcean OAuth token (control plane)"
             value={doToken} onChange={(e: any) => setDoToken(e.target.value)}
             style={{ marginBottom: "1rem" }} />

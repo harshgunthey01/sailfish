@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Theme } from "@carbon/react";
 
 interface ThemeCtx {
@@ -17,6 +17,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem("sf-theme");
     return saved ? saved === "dark" : true; // PRD: default g100 dark
   });
+
+  // Apply the theme class globally so html/body (the area outside the app
+  // content) is themed too, not just the component tree. Carbon emits theme
+  // tokens via `.cds--g100` / `.cds--g10`, which also set background + text.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("cds--g100", dark);
+    root.classList.toggle("cds--g10", !dark);
+    root.style.colorScheme = dark ? "dark" : "light";
+  }, [dark]);
 
   const value = useMemo(
     () => ({

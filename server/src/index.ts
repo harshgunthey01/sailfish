@@ -10,6 +10,7 @@ import { sessionAdminId } from "./auth/admin.js";
 import { setupRoutes } from "./api/routes/setup.js";
 import { billingRoutes, telemetryRoutes } from "./api/routes/billing.js";
 import { routerRoutes } from "./api/routes/router.js";
+import { modelRouterRoutes } from "./api/routes/model-routers.js";
 import { modelRoutes } from "./api/routes/models.js";
 import { notificationRoutes } from "./api/routes/notifications.js";
 import { scheduleEvery, scheduleDaily } from "./services/scheduler.js";
@@ -62,6 +63,7 @@ async function main() {
   });
   protectedApp.route("/billing", billingRoutes(vault));
   protectedApp.route("/router", routerRoutes());
+  protectedApp.route("/model-routers", modelRouterRoutes(vault));
   protectedApp.route("/models", modelRoutes(vault));
   protectedApp.route("/notifications", notificationRoutes(vault));
   app.route("/api/v1", protectedApp);
