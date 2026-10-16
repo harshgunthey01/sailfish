@@ -315,8 +315,7 @@ export class DOClient {
   }
 
   // ---- core compute: droplet inventory (read-only) ----
-  async listDroplets(): Promise<Droplet[]> {
-    const out: Droplet[] = [];
+  async listDroplets(): Promise<Droplet[]> {    const out: Droplet[] = [];
     let page = 1;
     for (;;) {
       const { status, json, text } = await req(
@@ -344,6 +343,38 @@ export class DOClient {
       if (page > 50) break; // sanity cap
     }
     return out;
+  }
+
+  /** Droplet host metrics passthrough (MONITORING.md Phase 3/B1). Read-only. */
+  async dropletMetrics(
+    hostId: string | number,
+    metric: string,
+    start: string,
+    end: string
+  ): Promise<any> {
+    // Exact paths per the DO OpenAPI spec (there is no plain `memory` or
+    // disk_read/write droplet metric; bandwidth needs extra interface params).
+    const allowed = [
+      "cpu",
+      "load_1",
+      "load_5",
+      "load_15",
+      "memory_available",
+      "memory_free",
+      "memory_total",
+      "memory_cached",
+      "filesystem_free",
+      "filesystem_size",
+    ];
+    if (!allowed.includes(metric)) throw new DOError(400, `unknown metric: ${metric}`);
+    const q = `host_id=${encodeURIComponent(String(hostId))}&start=${start}&end=${end}`;
+    const { status, json, text } = await req(
+      CTRL,
+      this.ctrlToken,
+      "GET",
+      `/v2/monitoring/metrics/droplet/${metric}?${q}`
+    );
+    return expect(status, json, text);
   }
 
   // ---- inference plane ----

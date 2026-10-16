@@ -18,6 +18,7 @@ import { notificationRoutes } from "./api/routes/notifications.js";
 import { scheduleEvery, scheduleDaily } from "./services/scheduler.js";
 import { applyPendingRestore, createBackup, backupDue } from "./services/backup.js";
 import { uploadIfConfigured } from "./services/s3.js";
+import { pollDoStatus } from "./services/do-status.js";
 import { checkDigestDue } from "./services/digest.js";
 import { syncBilling } from "./services/billing-sync.js";
 import { notifyBreaches } from "./services/thresholds.js";
@@ -128,6 +129,12 @@ async function main() {
   scheduleDaily("digest", 8, async () => {
     const r = await checkDigestDue(vault);
     log({ task: "digest", ...r });
+  });
+
+  // DO platform status poll (every 15 min; drives the dashboard banner).
+  scheduleEvery("do-status", 15 * 60_000, async () => {
+    const r = await pollDoStatus();
+    log({ task: "do-status", ...r });
   });
 
   // resume stuck jobs on boot

@@ -132,6 +132,7 @@ export function pruneTelemetry() {
   db.prepare(`DELETE FROM telemetry_hourly WHERE hour_ts < datetime('now', '-365 days')`).run();
   db.prepare(`DELETE FROM notification_log WHERE ts < datetime('now', '-90 days')`).run();
   db.prepare(`DELETE FROM jobs WHERE created_at < datetime('now', '-30 days')`).run();
+  db.prepare(`DELETE FROM sync_log WHERE ts < datetime('now', '-30 days')`).run();
 }
 
 function round6(n: number): number {

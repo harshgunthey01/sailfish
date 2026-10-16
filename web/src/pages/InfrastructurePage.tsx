@@ -10,8 +10,13 @@ import {
   Tag,
   InlineNotification,
   InlineLoading,
+  Dropdown,
+  Button,
+  NumberInput,
 } from "@carbon/react";
+import { AreaChart } from "@carbon/charts-react";
 import { api } from "../api";
+import { useAppTheme } from "../theme";
 
 interface Droplet {
   id: number;
@@ -31,11 +36,65 @@ interface RegionSpend {
 }
 
 export default function InfrastructurePage() {
+  const { dark } = useAppTheme();
+  const chartTheme = dark ? "g100" : "g10";
   const [droplets, setDroplets] = useState<Droplet[]>([]);
   const [regions, setRegions] = useState<RegionSpend[]>([]);
   const [totals, setTotals] = useState({ attributed: 0, unattributed: 0, total: 0, mtd: 0 });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // ---- host metrics (MONITORING.md Phase 3/B1; needs a droplet to show data) ----
+  // Names are the exact DO monitoring paths (spec-verified; no plain `memory`).
+  const METRICS = [
+    "cpu",
+    "load_1",
+    "load_5",
+    "load_15",
+    "memory_available",
+    "memory_free",
+    "memory_total",
+    "memory_cached",
+    "filesystem_free",
+    "filesystem_size",
+  ];
+  const [metricHost, setMetricHost] = useState("");
+  const [metric, setMetric] = useState("cpu");
+  const [metricHours, setMetricHours] = useState(24);
+  const [metricPoints, setMetricPoints] = useState<any[]>([]);
+  const [metricLoading, setMetricLoading] = useState(false);
+  const [metricError, setMetricError] = useState<string | null>(null);
+
+  const fetchMetrics = async () => {
+    if (!metricHost) return;
+    setMetricLoading(true);
+    setMetricError(null);
+    try {
+      const r = await api.get<{ data: any }>(
+        `/infrastructure/metrics?host_id=${encodeURIComponent(metricHost)}&metric=${encodeURIComponent(metric)}&hours=${metricHours}`
+      );
+      const series: any[] = [];
+      const results = r.data?.data?.result ?? r.data?.result ?? [];
+      for (const s of results) {
+        for (const [ts, val] of s.values ?? []) {
+          const n = parseFloat(val);
+          if (Number.isFinite(n)) {
+            series.push({
+              group: s.metric?.mode ?? s.metric?.device ?? metric,
+              date: new Date(Number(ts) * 1000).getTime(),
+              value: Math.round(n * 10000) / 10000,
+            });
+          }
+        }
+      }
+      setMetricPoints(series);
+      if (!series.length) setMetricError("No datapoints returned for this window.");
+    } catch (e: any) {
+      setMetricError(e?.body?.error ?? e?.message ?? "Metrics fetch failed");
+    } finally {
+      setMetricLoading(false);
+    }
+  };
 
   useEffect(() => {
     api
@@ -165,6 +224,70 @@ export default function InfrastructurePage() {
           </>
         ) : (
           !loading && <p className="sf-muted">No core-compute spend this month.</p>
+        )}
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>Host metrics</h5>
+        {droplets.length === 0 && !loading ? (
+          <p className="sf-muted">No droplets — nothing to monitor yet.</p>
+        ) : (
+          <>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}>
+              <Dropdown
+                id="metric-host"
+                titleText="Droplet"
+                label="droplet"
+                items={droplets.map((d) => String(d.id))}
+                itemToString={(id: string) => droplets.find((d) => String(d.id) === id)?.name ?? id}
+                selectedItem={metricHost}
+                onChange={({ selectedItem }: any) => setMetricHost(selectedItem)}
+              />
+              <Dropdown
+                id="metric-name"
+                titleText="Metric"
+                label="metric"
+                items={METRICS}
+                selectedItem={metric}
+                onChange={({ selectedItem }: any) => setMetric(selectedItem)}
+              />
+              <NumberInput
+                id="metric-hours"
+                label="Hours"
+                min={1}
+                max={168}
+                value={metricHours}
+                onChange={(e: any) => setMetricHours(Number(e.target.value))}
+              />
+              <Button kind="primary" disabled={metricLoading || !metricHost} onClick={fetchMetrics}>
+                {metricLoading ? <InlineLoading /> : "Load metrics"}
+              </Button>
+            </div>
+            {metricError && (
+              <InlineNotification
+                kind="error"
+                title="Metrics failed"
+                subtitle={metricError}
+                lowContrast
+                style={{ marginTop: "0.75rem" }}
+              />
+            )}
+            {metricPoints.length > 0 && (
+              <AreaChart
+                key={`host-${chartTheme}`}
+                data={metricPoints}
+                options={{
+                  theme: chartTheme,
+                  axes: {
+                    left: { mapsTo: "value" },
+                    bottom: { scaleType: "time", mapsTo: "date" },
+                  },
+                  height: "260px",
+                  curve: "curveMonotoneX",
+                } as any}
+              />
+            )}
+          </>
         )}
       </Column>
     </Grid>

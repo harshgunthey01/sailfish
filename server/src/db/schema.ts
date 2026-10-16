@@ -183,9 +183,28 @@ function migrate(d: DatabaseSync) {
     observed_at TEXT NOT NULL
   );
 
-  -- monthly budget envelopes with progressive alerts (MONITORING.md Phase 6)
-  CREATE TABLE IF NOT EXISTS budgets (
+  -- sync run log for app-health (MONITORING.md Phase 3/B2)
+  CREATE TABLE IF NOT EXISTS sync_log (
     id TEXT PRIMARY KEY,
+    ts TEXT NOT NULL DEFAULT (datetime('now')),
+    task TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    detail TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_sync_log_ts ON sync_log(ts);
+
+  -- DO platform incidents for the status banner (MONITORING.md Phase 3/C1)
+  CREATE TABLE IF NOT EXISTS do_incidents (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    shortlink TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- monthly budget envelopes with progressive alerts (MONITORING.md Phase 6)
+  CREATE TABLE IF NOT EXISTS budgets (    id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     scope TEXT NOT NULL CHECK (scope IN ('ai','core','total')),
     amount_usd REAL NOT NULL CHECK (amount_usd > 0),

@@ -177,6 +177,13 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       void notifyBreaches(breaches, (ch, msg) => sendChannel(ch, msg, vault));
     }
 
+    try {
+      getDb()
+        .prepare("INSERT INTO sync_log (id, task, ok, detail) VALUES (?,?,1,?)")
+        .run(newId(), "billing-sync", "synced");
+    } catch {
+      /* logging must never break the response */
+    }
     return {
       ok: true,
       detail: "synced",
@@ -190,12 +197,44 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
     };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
+    try {
+      getDb()
+        .prepare("INSERT INTO sync_log (id, task, ok, detail) VALUES (?,?,0,?)")
+        .run(newId(), "billing-sync", detail.slice(0, 500));
+    } catch {
+      /* logging must never break the response */
+    }
     return { ok: false, detail };
   }
 }
 
-export function billingSummary() {
+/** App-health snapshot from the sync log (MONITORING.md Phase 3/B2). */
+export function healthSummary() {
   const db = getDb();
+  const last = db
+    .prepare("SELECT ts, ok, detail FROM sync_log WHERE task = 'billing-sync' ORDER BY ts DESC LIMIT 1")
+    .get() as { ts: string; ok: number; detail: string } | undefined;
+  const f24 = db
+    .prepare("SELECT COUNT(*) AS n FROM sync_log WHERE task = 'billing-sync' AND ok = 0 AND ts >= datetime('now', '-1 day')")
+    .get() as { n: number };
+  const recent = db
+    .prepare("SELECT ok FROM sync_log WHERE task = 'billing-sync' ORDER BY ts DESC LIMIT 50")
+    .all() as Array<{ ok: number }>;
+  let consecutive = 0;
+  for (const r of recent) {
+    if (r.ok === 0) consecutive++;
+    else break;
+  }
+  return {
+    last_ts: last?.ts ?? null,
+    last_ok: last ? last.ok === 1 : null,
+    last_detail: last?.detail ?? null,
+    consecutive_failures: consecutive,
+    failures_24h: f24.n,
+  };
+}
+
+export function billingSummary() {  const db = getDb();
   const state = db.prepare("SELECT * FROM billing_state WHERE id='singleton'").get() as any;
   let payments: Array<{ description?: string; amount?: string; date?: string; type?: string }> = [];
   try {

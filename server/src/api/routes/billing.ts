@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { billingSummary, dailySummary, forecastSummary, cacheSummary, syncBilling } from "../../services/billing-sync.js";
+import { billingSummary, dailySummary, forecastSummary, cacheSummary, healthSummary, syncBilling } from "../../services/billing-sync.js";
+import { unresolvedIncidents } from "../../services/do-status.js";
 import type { Vault } from "../../services/vault.js";
 import { ingestTelemetry, burnRateSeries, costByModel, verifyIngestAuth } from "./telemetry-helpers.js";
 
@@ -15,6 +16,9 @@ export function billingRoutes(vault: Vault): Hono {
 
   app.get("/forecast", (c) => c.json(forecastSummary()));
 
+  app.get("/health", (c) => c.json(healthSummary()));
+
+  app.get("/status", (c) => c.json(unresolvedIncidents()));
   app.get("/cache", (c) => {
     const days = parseInt(c.req.query("days") ?? "30", 10);
     return c.json(cacheSummary(days));

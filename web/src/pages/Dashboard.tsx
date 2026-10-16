@@ -5,6 +5,7 @@ import {
   ClickableTile,
   Button,
   InlineLoading,
+  InlineNotification,
   Tag,
   ProgressBar,
   StructuredListWrapper,
@@ -70,6 +71,15 @@ export default function Dashboard() {
       rates: string;
     }>;
   } | null>(null);
+  const [health, setHealth] = useState<{
+    last_ts: string | null;
+    last_ok: boolean | null;
+    consecutive_failures: number;
+    failures_24h: number;
+  } | null>(null);
+  const [incidents, setIncidents] = useState<
+    Array<{ id: string; name: string; status: string; shortlink: string }>
+  >([]);
   const [budgets, setBudgets] = useState<
     Array<{
       id: string;
@@ -114,8 +124,17 @@ export default function Dashboard() {
         }>;
       }>("/billing/cache?days=30"),
       api.get<{ budgets: any[] }>("/notifications/budgets"),
+      api.get<{
+        last_ts: string | null;
+        last_ok: boolean | null;
+        consecutive_failures: number;
+        failures_24h: number;
+      }>("/billing/health"),
+      api.get<{
+        incidents: Array<{ id: string; name: string; status: string; shortlink: string }>;
+      }>("/billing/status"),
     ])
-      .then(([b, s, m, d, c, f, ch, bg]) => {
+      .then(([b, s, m, d, c, f, ch, bg, h, st]) => {
         setBilling(b);
         setSeries(s.series);
         setByModel(m.by_model as any[]);
@@ -124,6 +143,8 @@ export default function Dashboard() {
         setForecast(f);
         setCache(ch);
         setBudgets(bg.budgets);
+        setHealth(h);
+        setIncidents(st.incidents);
       })
       .catch(() => {});
 
@@ -198,6 +219,21 @@ export default function Dashboard() {
           </Button>
         </div>
       </Column>
+
+      {incidents.length > 0 && (
+        <Column sm={4} md={8} lg={16}>
+          {incidents.map((i) => (
+            <InlineNotification
+              key={i.id}
+              kind="warning"
+              title="DigitalOcean incident"
+              subtitle={`${i.name} (${i.status})${i.shortlink ? ` — ${i.shortlink}` : ""}`}
+              lowContrast
+              style={{ marginBottom: "0.5rem" }}
+            />
+          ))}
+        </Column>
+      )}
 
       <Column sm={4} md={4} lg={4}>
         <ClickableTile onClick={load}>
@@ -300,6 +336,14 @@ export default function Dashboard() {
               {showBudget.on_pace_to_exceed ? " · over pace" : ""}
             </button>
           </div>
+        )}
+        {health && (
+          <p className="sf-muted" style={{ margin: "0.5rem 0 0" }}>
+            Sync {health.last_ok === false ? "FAILED" : "OK"}
+            {health.last_ts ? ` ${new Date(health.last_ts + "Z").toLocaleString()}` : ""} ·{" "}
+            {health.failures_24h} failure(s) (24h)
+            {health.consecutive_failures > 1 ? ` · ${health.consecutive_failures} in a row` : ""}
+          </p>
         )}
       </Column>
 
