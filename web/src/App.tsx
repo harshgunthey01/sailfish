@@ -21,7 +21,7 @@ import { ToastProvider, useNotifications } from "./toast";
 /** Hand-drawn megaphone (Carbon icons-react has no megaphone in this version). */
 function MegaphoneIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+    <svg width="24" height="24" viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <path d="M2.5 8.5v3H6l6.5 3.5v-10L6 8.5H2.5z" fill="currentColor" />
       <path d="M14.5 4.5v11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       <path d="M6.8 12.3 6 17h2.4l1-4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -145,14 +145,23 @@ function Shell() {
             {dark ? <Awake /> : <Asleep />}
           </HeaderGlobalAction>
           <HeaderGlobalAction
-            aria-label="Logout"
+            aria-label="Sign out"
             onClick={async () => {
               await api.post("/setup/logout");
               setAuthed(false);
               refresh();
             }}
           >
-            <span style={{ fontSize: "0.75rem" }}>exit</span>
+            <span
+              style={{
+                fontSize: "0.875rem",
+                fontWeight: 700,
+                color: "var(--cds-text-error, #da1e28)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Sign out
+            </span>
           </HeaderGlobalAction>
         </HeaderGlobalBar>
         <SideNav aria-label="Side" isFixedNav expanded={navOpen} onOverlayClick={() => setNavOpen(false)}>
