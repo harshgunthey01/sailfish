@@ -230,7 +230,7 @@ export default function RouterPage() {
       )}
 
       {/* ---------- create / edit form ---------- */}
-      <Column sm={4} md={8} lg={16}>
+      <Column sm={4} md={8} lg={16} className="sf-section">
         <h4 style={{ marginBottom: "0.75rem" }}>
           {editingUuid ? `Edit router` : "Create a model router"}
         </h4>
@@ -365,7 +365,7 @@ export default function RouterPage() {
       </Column>
 
       {/* ---------- existing routers ---------- */}
-      <Column sm={4} md={8} lg={16}>
+      <Column sm={4} md={8} lg={16} className="sf-section">
         <div
           style={{
             display: "flex",
