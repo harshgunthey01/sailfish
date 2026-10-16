@@ -6,7 +6,10 @@
  */
 
 const CTRL = "https://api.digitalocean.com";
-const INF = "https://api.digitalocean.com";
+// Serverless inference plane (model list, chat completions) lives on a
+// separate base URL and authenticates with the model access key — NOT the
+// OAuth token, and NOT api.digitalocean.com (which 404s /v1/* paths).
+const INF = "https://inference.do-ai.run";
 
 export class DOError extends Error {
   status: number;

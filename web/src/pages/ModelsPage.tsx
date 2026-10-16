@@ -13,7 +13,9 @@ import {
   Modal,
   CodeSnippet,
   InlineLoading,
+  InlineNotification,
   TextInput,
+  Search,
 } from "@carbon/react";
 import { api } from "../api";
 
@@ -21,6 +23,12 @@ interface Managed {
   id: string;
   model_name: string;
   status: string;
+}
+interface AvailableModel {
+  id?: string;
+  name?: string;
+  provider?: string;
+  type?: string;
 }
 interface Job {
   id: string;
@@ -31,38 +39,96 @@ interface Job {
   payload_json: string;
 }
 
+const PAGE_SIZE = 100;
+
 export default function ModelsPage() {
   const [managed, setManaged] = useState<Managed[]>([]);
-  const [available, setAvailable] = useState<any[]>([]);
+  const [available, setAvailable] = useState<AvailableModel[]>([]);
+  const [source, setSource] = useState("cache");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [output, setOutput] = useState<string | null>(null);
   const [newModel, setNewModel] = useState("");
+  const [filter, setFilter] = useState("");
+  const [notice, setNotice] = useState<{ kind: "error" | "success"; text: string } | null>(null);
 
   const load = () =>
     Promise.all([
-      api.get<{ managed: Managed[]; available: any[] }>("/models"),
+      api.get<{ managed: Managed[]; available: AvailableModel[]; source?: string }>("/models"),
       api.get<{ jobs: Job[] }>("/models/jobs"),
     ])
       .then(([m, j]) => {
         setManaged(m.managed);
-        setAvailable(m.available as any[]);
-        setJobs(j.jobs);
+        setAvailable(m.available as AvailableModel[]);
+        setSource(m.source ?? "cache");
       })
-      .catch(() => {});
+      .catch((e: any) =>
+        setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Failed to load models" })
+      );
 
+  // Poll fast only while a provisioning job is in flight; idle otherwise.
+  const anyDeploying = managed.some((m) => m.status === "Deploying");
   useEffect(() => {
     load();
-    const h = setInterval(load, 10_000);
+    const h = setInterval(load, anyDeploying ? 10_000 : 60_000);
     return () => clearInterval(h);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyDeploying]);
 
   const lastJobFor = (name: string) =>
-    jobs.find((j) => JSON.parse(j.payload_json).model_name === name);
+    jobs.find((j) => {
+      try {
+        return JSON.parse(j.payload_json).model_name === name;
+      } catch {
+        return false;
+      }
+    });
+
+  const addModel = async (rawName: string) => {
+    const name = rawName.trim();
+    if (!name) return;
+    try {
+      await api.post("/models", { model_name: name });
+      setNewModel("");
+      setNotice({ kind: "success", text: `Provisioning started for “${name}”.` });
+      load();
+    } catch (e: any) {
+      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Add failed" });
+    }
+  };
+
+  const toggleModel = async (name: string, on: boolean) => {
+    try {
+      if (on) await api.post("/models", { model_name: name });
+      else await api.delete(`/models/${encodeURIComponent(name)}`);
+      load();
+      setTimeout(load, 1500);
+    } catch (e: any) {
+      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Update failed" });
+    }
+  };
+
+  const managedNames = new Set(managed.map((m) => m.model_name.toLowerCase()));
+  const visibleAvailable = available
+    .map((a) => String(a.id ?? a.name ?? ""))
+    .filter(Boolean)
+    .filter((n) => !managedNames.has(n.toLowerCase()))
+    .filter((n) => !filter || n.toLowerCase().includes(filter.toLowerCase()))
+    .slice(0, PAGE_SIZE);
 
   return (
     <Grid narrow className="sf-content">
       <Column sm={4} md={8} lg={16}>
         <h3>Model Registry</h3>
+        {notice && (
+          <InlineNotification
+            kind={notice.kind}
+            title={notice.kind === "error" ? "Error" : "OK"}
+            subtitle={notice.text}
+            lowContrast
+            onCloseButtonClick={() => setNotice(null)}
+            style={{ margin: "0.5rem 0" }}
+          />
+        )}
       </Column>
 
       <Column sm={4} md={8} lg={16}>
@@ -75,15 +141,7 @@ export default function ModelsPage() {
             onChange={(e: any) => setNewModel(e.target.value)}
             hideLabel
           />
-          <Button
-            kind="primary"
-            onClick={async () => {
-              if (!newModel) return;
-              await api.post("/models", { model_name: newModel }).catch(() => {});
-              setNewModel("");
-              load();
-            }}
-          >
+          <Button kind="primary" onClick={() => addModel(newModel)}>
             Add
           </Button>
         </div>
@@ -117,11 +175,7 @@ export default function ModelsPage() {
                       labelText=""
                       hideLabel
                       toggled={m.status === "Active"}
-                      onToggle={(on: boolean) => {
-                        if (on) api.post("/models", { model_name: m.model_name });
-                        else api.delete(`/models/${encodeURIComponent(m.model_name)}`);
-                        setTimeout(load, 500);
-                      }}
+                      onToggle={(on: boolean) => toggleModel(m.model_name, on)}
                     />
                   </StructuredListCell>
                   <StructuredListCell>
@@ -143,9 +197,52 @@ export default function ModelsPage() {
           </StructuredListBody>
         </StructuredListWrapper>
         {managed.length === 0 && (
+          <p className="sf-muted">No managed models yet — add one above or from the list below.</p>
+        )}
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>
+          Available on DigitalOcean{" "}
+          <Tag type={source === "live" ? "green" : "cool-gray"}>{source}</Tag>
+        </h5>
+        <Search
+          id="model-search"
+          labelText="Filter available models"
+          placeholder="e.g. deepseek, glm, qwen…"
+          value={filter}
+          onChange={(e: any) => setFilter(e.target.value)}
+          style={{ marginBottom: "0.75rem" }}
+        />
+        <StructuredListWrapper>
+          <StructuredListHead>
+            <StructuredListRow head>
+              <StructuredListCell head>Model</StructuredListCell>
+              <StructuredListCell head>Actions</StructuredListCell>
+            </StructuredListRow>
+          </StructuredListHead>
+          <StructuredListBody>
+            {visibleAvailable.map((n) => (
+              <StructuredListRow key={n}>
+                <StructuredListCell>{n}</StructuredListCell>
+                <StructuredListCell>
+                  <Button size="sm" kind="secondary" onClick={() => addModel(n)}>
+                    Add
+                  </Button>
+                </StructuredListCell>
+              </StructuredListRow>
+            ))}
+          </StructuredListBody>
+        </StructuredListWrapper>
+        {visibleAvailable.length === 0 && (
           <p className="sf-muted">
-            No managed models yet. {available.length} models available on your DO account.
+            {available.length === 0
+              ? "Could not reach the DO model list — check Settings → DigitalOcean connection."
+              : "No matches (models already in your fleet are hidden)."}
           </p>
+        )}
+        {visibleAvailable.length >= PAGE_SIZE && (
+          <p className="sf-muted">Showing first {PAGE_SIZE} — refine the filter to narrow down.</p>
         )}
       </Column>
 
