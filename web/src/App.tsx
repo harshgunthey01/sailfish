@@ -109,7 +109,7 @@ function Shell() {
           </SideNavItems>
         </SideNav>
       </Header>
-      <Content>
+      <Content className={navOpen ? "sf-nav-open" : undefined}>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/router" element={<RouterPage />} />

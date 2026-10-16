@@ -24,6 +24,17 @@ body {
   max-width: 1200px;
 }
 
+// Push layout: the fixed SideNav would otherwise slide OVER the fields.
+// When the nav opens, shift the content right by the nav width (16rem) so
+// the menu behaves as part of the page. Easing matches Carbon's nav slide.
+.cds--content {
+  transition: margin-left 0.24s cubic-bezier(0.2, 0, 0.38, 0.9);
+}
+
+.cds--content.sf-nav-open {
+  margin-left: 16rem;
+}
+
 // App-wide vertical rhythm: page headings always clear the content below,
 // and major sections separate from each other. (Inline styles on individual
 // headings still win where a page needs a custom value.)
