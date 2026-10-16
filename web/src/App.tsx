@@ -80,13 +80,18 @@ function Shell() {
         </HeaderGlobalAction>
         <img
           src="/favicon.svg"
-          alt="Sailfish"
+          alt="Sailfish home"
+          title="Home"
           width={26}
           height={26}
-          style={{ marginLeft: "0.25rem", flexShrink: 0 }}
+          style={{ marginLeft: "0.25rem", flexShrink: 0, cursor: "pointer" }}
+          onClick={() => navigate("/")}
         />
-        <HeaderName prefix="">Sailfish</HeaderName>
+        <HeaderName prefix="" onClick={() => navigate("/")} style={{ cursor: "pointer" }}>
+          Sailfish
+        </HeaderName>
         <HeaderNavigation aria-label="Main">
+          <HeaderMenuItem onClick={() => navigate("/")}>Home</HeaderMenuItem>
           <HeaderMenuItem onClick={() => navigate("/")}>Dashboard</HeaderMenuItem>
           <HeaderMenuItem onClick={() => navigate("/router")}>Router</HeaderMenuItem>
           <HeaderMenuItem onClick={() => navigate("/models")}>Models</HeaderMenuItem>
@@ -109,6 +114,7 @@ function Shell() {
         </HeaderGlobalBar>
         <SideNav aria-label="Side" isFixedNav expanded={navOpen} onOverlayClick={() => setNavOpen(false)}>
           <SideNavItems>
+            <SideNavLink onClick={() => navigate("/")}>Home</SideNavLink>
             <SideNavLink onClick={() => navigate("/")}>Dashboard</SideNavLink>
             <SideNavLink onClick={() => navigate("/router")}>Router Rules</SideNavLink>
             <SideNavLink onClick={() => navigate("/models")}>Model Registry</SideNavLink>
