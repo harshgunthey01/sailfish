@@ -35,6 +35,14 @@ body {
   margin-left: 16rem;
 }
 
+// Header actions are fixed 3rem icon squares; the Sign out action carries
+// text, so let it size to its content instead of clipping ("Sign ou…").
+.cds--header__action[aria-label="Sign out"] {
+  inline-size: auto;
+  min-inline-size: 3rem;
+  padding-inline: 0.75rem;
+}
+
 // App-wide vertical rhythm: page headings always clear the content below,
 // and major sections separate from each other. (Inline styles on individual
 // headings still win where a page needs a custom value.)
