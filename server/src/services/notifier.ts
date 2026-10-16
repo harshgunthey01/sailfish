@@ -92,6 +92,30 @@ export async function sendTestEmail(vault: Vault): Promise<{ ok: boolean; detail
   return sendChannel("smtp", "Sailfish test email — SMTP configuration works.", vault);
 }
 
+/** Directed email (password resets). Returns ok:false instead of throwing. */
+export async function sendEmail(
+  vault: Vault,
+  to: string,
+  subject: string,
+  text: string
+): Promise<{ ok: boolean; detail: string }> {
+  const settings = loadNotificationSettings();
+  try {
+    if (!settings.smtp) return { ok: false, detail: "smtp not configured" };
+    const pw = vault.get("smtp_password") ?? "";
+    const t = nodemailer.createTransport({
+      host: settings.smtp.host,
+      port: settings.smtp.port,
+      secure: settings.smtp.secure,
+      auth: settings.smtp.username ? { user: settings.smtp.username, pass: pw } : undefined,
+    });
+    await t.sendMail({ from: settings.smtp.from, to, subject, text });
+    return { ok: true, detail: "sent" };
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export function logNotification(channel: string, event: string, status: string, detail: string) {
   getDb()
     .prepare("INSERT INTO notification_log (id, channel, event, status, detail) VALUES (?,?,?,?,?)")

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import crypto from "node:crypto";
 import { getDb, newId } from "../../db/schema.js";
 import {
   adminExists,
@@ -7,9 +8,10 @@ import {
   verifyAdmin,
   sessionAdminId,
   destroySession,
+  destroySessionsForAdmin,
   hashPassword,
 } from "../../auth/admin.js";
-import { sendTestEmail, logNotification } from "../../services/notifier.js";
+import { sendTestEmail, sendEmail, logNotification } from "../../services/notifier.js";
 import type { Vault } from "../../services/vault.js";
 import { DOClient } from "../../do/client.js";
 
@@ -57,14 +59,76 @@ export function setupRoutes(vault: Vault): Hono {
     return c.json({ ok: true });
   });
 
-  app.get("/me", (c) => {
-    const m = (c.req.header("Cookie") ?? "").match(/sf_session=([^;]+)/);
+  app.get("/me", (c) => {    const m = (c.req.header("Cookie") ?? "").match(/sf_session=([^;]+)/);
     const adminId = sessionAdminId(m?.[1]);
     if (!adminId) return c.json({ authenticated: false });
     const admin = getDb().prepare("SELECT email FROM admins WHERE id=?").get(adminId) as {
       email: string;
     };
     return c.json({ authenticated: true, email: admin.email });
+  });
+
+  // Password recovery via emailed reset link (public).
+  // Always returns ok:true so the endpoint can't be used to enumerate accounts.
+  // Requires SMTP to be configured; otherwise the email silently can't go out
+  // (see server log) — configure it in Settings → Notifications while logged in.
+  app.post("/password/forgot", async (c) => {
+    const body = await c.req.json<{ email?: string }>();
+    const email = (body.email ?? "").trim().toLowerCase();
+    const admin = email
+      ? (getDb().prepare("SELECT id, email FROM admins WHERE email = ?").get(email) as
+          | { id: string; email: string }
+          | undefined)
+      : undefined;
+    if (admin) {
+      const db = getDb();
+      db.prepare("DELETE FROM password_resets WHERE admin_id = ?").run(admin.id);
+      db.prepare("DELETE FROM password_resets WHERE expires_at < datetime('now')").run();
+      const token = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      db.prepare(
+        "INSERT INTO password_resets (id, admin_id, token_hash, expires_at) VALUES (?,?,?,datetime('now','+15 minutes'))"
+      ).run(newId(), admin.id, tokenHash);
+      const proto = c.req.header("x-forwarded-proto") ?? "http";
+      const host =
+        c.req.header("x-forwarded-host") ?? c.req.header("host") ?? "localhost:9000";
+      const link = `${proto}://${host}/reset?token=${token}`;
+      const r = await sendEmail(
+        vault,
+        admin.email,
+        "Sailfish password reset",
+        `A password reset was requested for your Sailfish admin account.\n\nSet a new password (link expires in 15 minutes, single use):\n${link}\n\nIf you did not request this, ignore this email.`
+      );
+      logNotification("smtp", "password_reset", r.ok ? "sent" : "failed", r.detail);
+      if (!r.ok) console.warn("[setup] password-reset email failed:", r.detail);
+    }
+    return c.json({ ok: true });
+  });
+
+  // Consume a reset token: single-use, 15-minute expiry, kills all sessions.
+  app.post("/password/reset", async (c) => {
+    const body = await c.req.json<{ token?: string; new_password?: string }>();
+    if ((body.new_password ?? "").length < 8)
+      return c.json({ error: "new password must be ≥ 8 chars" }, 400);
+    const tokenHash = body.token
+      ? crypto.createHash("sha256").update(String(body.token)).digest("hex")
+      : "";
+    // Expiry is compared inside SQLite (its datetime('now') is UTC, matching how
+    // expires_at was written). Parsing the "YYYY-MM-DD HH:MM:SS" string in JS
+    // would interpret it as *local* time and wrongly expire tokens east of UTC.
+    const row = getDb()
+      .prepare(
+        "SELECT id, admin_id FROM password_resets WHERE token_hash = ? AND used = 0 AND expires_at > datetime('now')"
+      )
+      .get(tokenHash) as { id: string; admin_id: string } | undefined;
+    if (!row) return c.json({ error: "invalid or expired link" }, 400);
+    getDb()
+      .prepare("UPDATE admins SET password_hash = ? WHERE id = ?")
+      .run(hashPassword(body.new_password!), row.admin_id);
+    getDb().prepare("UPDATE password_resets SET used = 1 WHERE id = ?").run(row.id);
+    destroySessionsForAdmin(row.admin_id);
+    logNotification("smtp", "password_reset", "done", "password changed via reset link");
+    return c.json({ ok: true });
   });
 
   // auth gate for remaining setup steps

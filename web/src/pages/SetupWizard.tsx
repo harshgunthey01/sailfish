@@ -31,9 +31,31 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
+  // password recovery (login screen only)
+  const initialToken =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("token")
+      : null;
+  const [authMode, setAuthMode] = useState<"login" | "forgot" | "reset">(
+    initialToken ? "reset" : "login"
+  );
+  const [resetToken] = useState(initialToken ?? "");
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [resetPass1, setResetPass1] = useState("");
+  const [resetPass2, setResetPass2] = useState("");
+
+  const clearResetTokenFromUrl = () => {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete("token");
+      window.history.replaceState({}, "", u.pathname + (u.search ? "?" + u.searchParams : ""));
+    } catch {
+      /* non-browser */
+    }
+  };
+
   // step 2
-  const [smtpHost, setSmtpHost] = useState("");
-  const [smtpPort, setSmtpPort] = useState(587);
+  const [smtpHost, setSmtpHost] = useState("");  const [smtpPort, setSmtpPort] = useState(587);
   const [smtpUser, setSmtpUser] = useState("");
   const [smtpPass, setSmtpPass] = useState("");
   const [smtpFrom, setSmtpFrom] = useState("");
@@ -85,7 +107,7 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
         />
       )}
 
-      {step === -1 && (
+      {step === -1 && authMode === "login" && (
         <div>
           <TextInput
             id="login-email"
@@ -101,18 +123,117 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
             onChange={(e: any) => setLoginPassword(e.target.value)}
             style={{ marginBottom: "1rem" }}
           />
-          <Button
-            kind="primary"
-            disabled={busy}
-            onClick={() =>
-              run(async () => {
-                await api.post("/setup/login", { email: loginEmail, password: loginPassword });
-                onDone();
-              })
-            }
-          >
-            {busy ? <InlineLoading /> : "Sign in"}
-          </Button>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <Button
+              kind="primary"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  await api.post("/setup/login", { email: loginEmail, password: loginPassword });
+                  onDone();
+                })
+              }
+            >
+              {busy ? <InlineLoading /> : "Sign in"}
+            </Button>
+            <Button kind="ghost" disabled={busy} onClick={() => setAuthMode("forgot")}>
+              Forgot password?
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === -1 && authMode === "forgot" && (
+        <div>
+          <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+            Enter your admin email. If the account exists and email notifications are
+            configured, a single-use reset link (15 minutes) will be sent.
+          </p>
+          <TextInput
+            id="forgot-email"
+            labelText="Admin email"
+            value={forgotEmail}
+            onChange={(e: any) => setForgotEmail(e.target.value)}
+            style={{ marginBottom: "1rem" }}
+          />
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <Button
+              kind="primary"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  await api.post("/setup/password/forgot", { email: forgotEmail });
+                  setNotice({
+                    kind: "success",
+                    text: "If the account exists, a reset link is on its way. Check your inbox (and spam).",
+                  });
+                  setAuthMode("login");
+                })
+              }
+            >
+              {busy ? <InlineLoading /> : "Send reset link"}
+            </Button>
+            <Button kind="ghost" disabled={busy} onClick={() => setAuthMode("login")}>
+              Back to sign in
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === -1 && authMode === "reset" && (
+        <div>
+          <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+            Choose a new password for your admin account. The link is single-use.
+          </p>
+          <PasswordInput
+            id="reset-pass1"
+            labelText="New password (min 8 chars)"
+            value={resetPass1}
+            onChange={(e: any) => setResetPass1(e.target.value)}
+            style={{ marginBottom: "1rem" }}
+          />
+          <PasswordInput
+            id="reset-pass2"
+            labelText="Confirm new password"
+            value={resetPass2}
+            onChange={(e: any) => setResetPass2(e.target.value)}
+            style={{ marginBottom: "1rem" }}
+          />
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <Button
+              kind="primary"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  if (resetPass1 !== resetPass2) throw new Error("Passwords do not match.");
+                  await api.post("/setup/password/reset", {
+                    token: resetToken,
+                    new_password: resetPass1,
+                  });
+                  clearResetTokenFromUrl();
+                  setResetPass1("");
+                  setResetPass2("");
+                  setAuthMode("login");
+                  setNotice({
+                    kind: "success",
+                    text: "Password changed. Sign in with your new password.",
+                  });
+                })
+              }
+            >
+              {busy ? <InlineLoading /> : "Set new password"}
+            </Button>
+            <Button
+              kind="ghost"
+              disabled={busy}
+              onClick={() => {
+                clearResetTokenFromUrl();
+                setAuthMode("login");
+              }}
+            >
+              Back to sign in
+            </Button>
+          </div>
         </div>
       )}
 

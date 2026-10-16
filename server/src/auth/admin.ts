@@ -85,6 +85,11 @@ export function destroySession(token: string) {
   getDb().prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash);
 }
 
+/** Log out everywhere (used after a password reset so stolen sessions die). */
+export function destroySessionsForAdmin(adminId: string) {
+  getDb().prepare("DELETE FROM sessions WHERE admin_id = ?").run(adminId);
+}
+
 /** HMAC key for telemetry ingest, derived from model access key. */
 export function ingestToken(modelAccessKey: string): string {
   return crypto.createHmac("sha256", "sailfish-ingest-v1").update(modelAccessKey).digest("hex");
