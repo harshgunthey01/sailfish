@@ -40,6 +40,7 @@ export interface SyncResult {
   core_compute_mtd?: number;
   ai_usage_mtd?: number;
   tax_mtd?: number;
+  prepaid_amount?: number;
 }
 
 export async function syncBilling(vault: Vault): Promise<SyncResult> {
@@ -93,11 +94,15 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       console.warn("[billing-sync] insights unavailable:", e instanceof Error ? e.message : String(e));
     }
 
-    // inference remaining = prepaid - used (fall back to raw fields if shape differs)
+    // inference remaining: prefer the explicit status.balance; fall back to prepaid - used.
     let inferenceBalance: number | null = null;
+    let prepaidAmount: number | null = null;
     let spendLimit: number | null = null;
     if (prepay) {
-      if (prepay.prepaid_amount !== undefined && prepay.used_amount !== undefined) {
+      prepaidAmount = prepay.prepaid_amount ?? null;
+      if (prepay.remaining_balance !== undefined) {
+        inferenceBalance = round6(prepay.remaining_balance);
+      } else if (prepay.prepaid_amount !== undefined && prepay.used_amount !== undefined) {
         inferenceBalance = round6(prepay.prepaid_amount - prepay.used_amount);
       }
       spendLimit = prepay.spend_limit ?? null;
@@ -112,7 +117,7 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
     db.prepare(
       `UPDATE billing_state
        SET compute_balance = ?, core_compute_mtd = ?, ai_usage_mtd = ?, tax_mtd = ?,
-           account_balance = ?, breakdown_json = ?, inference_balance = ?, last_synced = ?
+           account_balance = ?, prepaid_amount = ?, breakdown_json = ?, inference_balance = ?, last_synced = ?
        WHERE id = 'singleton'`
     ).run(
       mtd,
@@ -120,6 +125,7 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       round6(aiUsageMtd),
       round6(taxMtd),
       acctBal,
+      prepaidAmount ?? 0,
       breakdownJson,
       inferenceBalance ?? 0,
       ts
@@ -161,6 +167,7 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       core_compute_mtd: round6(coreComputeMtd),
       ai_usage_mtd: round6(aiUsageMtd),
       tax_mtd: round6(taxMtd),
+      prepaid_amount: prepaidAmount ?? 0,
     };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);

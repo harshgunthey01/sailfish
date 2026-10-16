@@ -68,6 +68,8 @@ export interface BalanceInfo {
 export interface PrepaymentInfo {
   prepaid_amount?: number;
   used_amount?: number;
+  /** Remaining prepaid credit, from the nested `status.balance` field. */
+  remaining_balance?: number;
   spend_limit?: number;
   prepay_threshold?: number;
   raw: any;
@@ -162,11 +164,15 @@ export class DOClient {
     );
     if (status === 404) return { raw: null };
     const j = expect(status, json, text);
+    // Live shape is nested ({config: {prepay_amount, ...}, status: {balance, ...}});
+    // keep top-level reads as fallback for older shapes.
+    const cfg = j.config ?? {};
     return {
-      prepaid_amount: num(j.prepaid_amount),
-      used_amount: num(j.used_amount),
-      spend_limit: num(j.spend_limit),
-      prepay_threshold: num(j.prepay_threshold),
+      prepaid_amount: num(j.prepaid_amount ?? cfg.prepay_amount),
+      used_amount: num(j.used_amount ?? cfg.used_amount),
+      remaining_balance: num(j.status?.balance ?? j.balance),
+      spend_limit: num(j.spend_limit ?? cfg.spend_limit),
+      prepay_threshold: num(j.prepay_threshold ?? cfg.prepay_threshold),
       raw: j,
     };
   }

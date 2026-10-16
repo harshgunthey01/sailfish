@@ -47,6 +47,7 @@ function migrate(d: DatabaseSync) {
     ai_usage_mtd REAL NOT NULL DEFAULT 0,
     tax_mtd REAL NOT NULL DEFAULT 0,
     account_balance REAL NOT NULL DEFAULT 0,
+    prepaid_amount REAL NOT NULL DEFAULT 0,
     breakdown_json TEXT,
     inference_balance REAL NOT NULL DEFAULT 0,
     is_blocked INTEGER NOT NULL DEFAULT 0,
@@ -168,6 +169,7 @@ function migrate(d: DatabaseSync) {
   addColumnIfMissing(d, "billing_state", "ai_usage_mtd", "REAL NOT NULL DEFAULT 0");
   addColumnIfMissing(d, "billing_state", "tax_mtd", "REAL NOT NULL DEFAULT 0");
   addColumnIfMissing(d, "billing_state", "account_balance", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(d, "billing_state", "prepaid_amount", "REAL NOT NULL DEFAULT 0");
   addColumnIfMissing(d, "billing_state", "breakdown_json", "TEXT");
   addColumnIfMissing(d, "billing_history", "core_compute_mtd", "REAL NOT NULL DEFAULT 0");
   addColumnIfMissing(d, "billing_history", "ai_usage_mtd", "REAL NOT NULL DEFAULT 0");

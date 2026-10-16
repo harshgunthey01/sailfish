@@ -17,6 +17,7 @@ interface BillingSummary {
     ai_usage_mtd?: number;
     tax_mtd?: number;
     account_balance?: number;
+    prepaid_amount?: number;
     inference_balance: number;
     is_blocked: number;
     last_synced: string;
@@ -92,7 +93,7 @@ export default function Dashboard() {
         </div>
       </Column>
 
-      <Column sm={4} md={4} lg={5}>
+      <Column sm={4} md={4} lg={4}>
         <ClickableTile onClick={load}>
           <div className="sf-muted">Core Compute (month-to-date)</div>
           <div className="sf-stat-number">
@@ -104,7 +105,7 @@ export default function Dashboard() {
         </ClickableTile>
       </Column>
 
-      <Column sm={4} md={4} lg={5}>
+      <Column sm={4} md={4} lg={4}>
         <ClickableTile onClick={load}>
           <div className="sf-muted">GenAI Usage (month-to-date)</div>
           <div className="sf-stat-number">
@@ -116,13 +117,40 @@ export default function Dashboard() {
         </ClickableTile>
       </Column>
 
-      <Column sm={4} md={4} lg={5}>
+      <Column sm={4} md={4} lg={4}>
         <ClickableTile onClick={load}>
-          <div className="sf-muted">AI Inference (prepaid remaining)</div>
+          <div className="sf-muted">Prepaid Inference (remaining)</div>
           <div className="sf-stat-number">
             ${s ? s.inference_balance.toFixed(2) : "—"}
           </div>
+          {s && s.prepaid_amount != null && s.prepaid_amount > 0 ? (
+            <div className="sf-muted">of ${s.prepaid_amount.toFixed(2)} prepaid</div>
+          ) : (
+            <div className="sf-muted">no prepaid plan</div>
+          )}
           {s?.is_blocked === 1 && <Tag type="red">threshold breached</Tag>}
+        </ClickableTile>
+      </Column>
+
+      <Column sm={4} md={4} lg={4}>
+        <ClickableTile onClick={load}>
+          <div className="sf-muted">Account Credit</div>
+          <div className="sf-stat-number">
+            {s && s.account_balance != null ? (
+              s.account_balance < 0 ? (
+                <>${Math.abs(s.account_balance).toFixed(2)}</>
+              ) : (
+                <>${s.account_balance.toFixed(2)}</>
+              )
+            ) : (
+              "—"
+            )}
+          </div>
+          {s && s.account_balance != null && (
+            <div className="sf-muted">
+              {s.account_balance < 0 ? "credit available" : s.account_balance > 0 ? "amount due" : "settled"}
+            </div>
+          )}
         </ClickableTile>
       </Column>
 
