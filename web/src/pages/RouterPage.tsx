@@ -104,7 +104,23 @@ export default function RouterPage() {
     setPolicies([emptyPolicy()]);
   }
 
+  /** DO-managed routers (e.g. "DigitalOcean managed Inference Router") expose no
+   *  editable config and the API rejects edits/deletes with 403. */
+  function isManagedRouter(r: RemoteModelRouter): boolean {
+    if (/digitalocean managed/i.test(r.description ?? "")) return true;
+    const fb = r.config?.fallback_models ?? [];
+    const pol = r.config?.policies ?? [];
+    return fb.length === 0 && pol.length === 0 && (r.regions ?? []).length === 0;
+  }
+
   function startEdit(r: RemoteModelRouter) {
+    if (isManagedRouter(r)) {
+      setNotice({
+        kind: "error",
+        text: `“${r.name}” is managed by DigitalOcean and cannot be edited.`,
+      });
+      return;
+    }
     setEditingUuid(r.uuid);
     setName(r.name ?? "");
     setDescription(r.description ?? "");
@@ -170,6 +186,14 @@ export default function RouterPage() {
   }
 
   async function remove(uuid: string, routerName: string) {
+    const target = remote.find((r) => r.uuid === uuid);
+    if (target && isManagedRouter(target)) {
+      setNotice({
+        kind: "error",
+        text: `“${routerName}” is managed by DigitalOcean and cannot be deleted.`,
+      });
+      return;
+    }
     if (!window.confirm(`Delete model router “${routerName}”? This cannot be undone.`)) return;
     try {
       await routerApi.remove(uuid);
@@ -375,6 +399,7 @@ export default function RouterPage() {
               title={
                 <span>
                   {r.name}{" "}
+                  {isManagedRouter(r) && <Tag type="outline">Managed by DigitalOcean</Tag>}{" "}
                   {r.description ? <span className="sf-muted">— {r.description}</span> : null}
                 </span>
               }
@@ -430,14 +455,20 @@ export default function RouterPage() {
                   ))}
                 </div>
 
-                <div style={{ display: "flex", gap: "0.5rem" }}>
-                  <Button size="sm" kind="secondary" onClick={() => startEdit(r)}>
-                    Edit
-                  </Button>
-                  <Button size="sm" kind="danger" onClick={() => remove(r.uuid, r.name)}>
-                    Delete
-                  </Button>
-                </div>
+                {isManagedRouter(r) ? (
+                  <div className="sf-muted">
+                    Managed by DigitalOcean — cannot be edited or deleted.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <Button size="sm" kind="secondary" onClick={() => startEdit(r)}>
+                      Edit
+                    </Button>
+                    <Button size="sm" kind="danger" onClick={() => remove(r.uuid, r.name)}>
+                      Delete
+                    </Button>
+                  </div>
+                )}
               </div>
             </AccordionItem>
           ))}

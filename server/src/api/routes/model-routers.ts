@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { DOClient } from "../../do/client.js";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { DOClient, DOError } from "../../do/client.js";
 import type { Vault } from "../../services/vault.js";
 import type { ModelRouterInput, ModelRouterTaskPolicy } from "../../do/client.js";
 
@@ -46,7 +47,7 @@ export function modelRouterRoutes(vault: Vault): Hono {
       return c.json({ routers, source: "live" });
     } catch (e) {
       console.error("[model-routers] list:", errMessage(e));
-      return c.json({ error: errMessage(e), code: "do_error" }, 502);
+      return c.json({ error: errMessage(e), code: "do_error" }, doStatus(e));
     }
   });
 
@@ -60,7 +61,7 @@ export function modelRouterRoutes(vault: Vault): Hono {
       const router = await client.createModelRouter(parsed.input);
       return c.json({ router }, 201);
     } catch (e) {
-      return c.json({ error: errMessage(e), code: "do_error" }, 502);
+      return c.json({ error: errMessage(e), code: "do_error" }, doStatus(e));
     }
   });
 
@@ -71,7 +72,7 @@ export function modelRouterRoutes(vault: Vault): Hono {
       const router = await client.getModelRouter(c.req.param("uuid"));
       return c.json({ router });
     } catch (e) {
-      return c.json({ error: errMessage(e), code: "do_error" }, 502);
+      return c.json({ error: errMessage(e), code: "do_error" }, doStatus(e));
     }
   });
 
@@ -85,7 +86,7 @@ export function modelRouterRoutes(vault: Vault): Hono {
       const router = await client.updateModelRouter(c.req.param("uuid"), parsed.input);
       return c.json({ router });
     } catch (e) {
-      return c.json({ error: errMessage(e), code: "do_error" }, 502);
+      return c.json({ error: errMessage(e), code: "do_error" }, doStatus(e));
     }
   });
 
@@ -96,7 +97,7 @@ export function modelRouterRoutes(vault: Vault): Hono {
       await client.deleteModelRouter(c.req.param("uuid"));
       return c.json({ ok: true });
     } catch (e) {
-      return c.json({ error: errMessage(e), code: "do_error" }, 502);
+      return c.json({ error: errMessage(e), code: "do_error" }, doStatus(e));
     }
   });
 
@@ -179,4 +180,10 @@ function toStringArray(v: unknown): string[] {
 
 function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** Surface DO's real HTTP status (e.g. 403 on managed routers) instead of a blanket 502. */
+function doStatus(e: unknown): ContentfulStatusCode {
+  const s = e instanceof DOError ? e.status : 502;
+  return s as ContentfulStatusCode;
 }
