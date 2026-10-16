@@ -153,3 +153,11 @@ export function upsertModel(name: string, status: "Active" | "Deploying" | "Remo
 export function listManagedModels() {
   return getDb().prepare("SELECT * FROM managed_models ORDER BY model_name").all();
 }
+
+/** Drop a model from the fleet entirely (typos, stuck Deploying rows).
+ *  Unlike toggle-off (which keeps a "Removed" history row), this deletes the row. */
+export function retireModel(name: string): boolean {
+  const db = getDb();
+  const r = db.prepare("DELETE FROM managed_models WHERE model_name = ?").run(name);
+  return r.changes > 0;
+}

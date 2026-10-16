@@ -8,6 +8,7 @@ import {
   processModelJob,
   listManagedModels,
   upsertModel,
+  retireModel,
 } from "../../services/model-manager.js";
 import type { Vault } from "../../services/vault.js";
 
@@ -43,6 +44,12 @@ export function modelRoutes(vault: Vault): Hono {
     // fire-and-forget async processing (PRD: background provisioning)
     void processModelJob(job.id, makeClient(vault));
     return c.json({ job: job.id }, 202);
+  });
+
+  app.delete("/:name/retire", (c) => {
+    const name = decodeURIComponent(c.req.param("name"));
+    const retired = retireModel(name);
+    return retired ? c.json({ ok: true, retired: name }) : c.json({ error: "not in fleet" }, 404);
   });
 
   app.delete("/:name", (c) => {

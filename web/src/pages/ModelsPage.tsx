@@ -107,6 +107,17 @@ export default function ModelsPage() {
     }
   };
 
+  const retireModel = async (name: string) => {
+    if (!window.confirm(`Retire “${name}” from the fleet? It will be removed entirely.`)) return;
+    try {
+      await api.delete(`/models/${encodeURIComponent(name)}/retire`);
+      setNotice({ kind: "success", text: `Retired “${name}”.` });
+      load();
+    } catch (e: any) {
+      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Retire failed" });
+    }
+  };
+
   const managedNames = new Set(managed.map((m) => m.model_name.toLowerCase()));
   const visibleAvailable = available
     .map((a) => String(a.id ?? a.name ?? ""))
@@ -179,17 +190,22 @@ export default function ModelsPage() {
                     />
                   </StructuredListCell>
                   <StructuredListCell>
-                    <Button
-                      size="sm"
-                      kind="ghost"
-                      onClick={() =>
-                        setOutput(
-                          `$ job ${job?.type ?? "-"}\n--- stdout ---\n${job?.stdout ?? "(none)"}\n--- stderr ---\n${job?.stderr ?? "(none)"}`
-                        )
-                      }
-                    >
-                      logs
-                    </Button>
+                    <div style={{ display: "flex", gap: "0.25rem" }}>
+                      <Button
+                        size="sm"
+                        kind="ghost"
+                        onClick={() =>
+                          setOutput(
+                            `$ job ${job?.type ?? "-"}\n--- stdout ---\n${job?.stdout ?? "(none)"}\n--- stderr ---\n${job?.stderr ?? "(none)"}`
+                          )
+                        }
+                      >
+                        logs
+                      </Button>
+                      <Button size="sm" kind="danger--ghost" onClick={() => retireModel(m.model_name)}>
+                        Retire
+                      </Button>
+                    </div>
                   </StructuredListCell>
                 </StructuredListRow>
               );
