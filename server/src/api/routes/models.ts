@@ -10,6 +10,7 @@ import {
   upsertModel,
   retireModel,
 } from "../../services/model-manager.js";
+import { listModelRates } from "../../services/billing-sync.js";
 import type { Vault } from "../../services/vault.js";
 
 export function modelRoutes(vault: Vault): Hono {
@@ -33,7 +34,7 @@ export function modelRoutes(vault: Vault): Hono {
         /* fall back to managed-only */
       }
     }
-    return c.json({ managed, available, source });
+    return c.json({ managed, available, source, rates: listModelRates() });
   });
 
   app.post("/", async (c) => {

@@ -348,7 +348,7 @@ export default function SettingsPage() {
             id="t-metric"
             titleText="Metric"
             label="metric"
-            items={["compute_balance", "inference_balance", "inference_remaining_pct"]}
+            items={["compute_balance", "inference_balance", "inference_remaining_pct", "daily_spend_usd", "daily_spend_spike"]}
             selectedItem={tMetric}
             onChange={({ selectedItem }: any) => setTMetric(selectedItem)}
           />
@@ -362,7 +362,7 @@ export default function SettingsPage() {
           />
           <NumberInput
             id="t-value"
-            label="Value ($ or %)"
+            label="Value ($, %, or ×)"
             value={tValue}
             onChange={(e: any) => setTValue(Number(e.target.value))}
           />

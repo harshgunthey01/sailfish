@@ -38,6 +38,12 @@ interface Job {
   stderr: string | null;
   payload_json: string;
 }
+interface ModelRate {
+  model_key: string;
+  input_per_1m: number;
+  output_per_1m: number;
+  observed_at: string;
+}
 
 const PAGE_SIZE = 100;
 
@@ -45,6 +51,7 @@ export default function ModelsPage() {
   const [managed, setManaged] = useState<Managed[]>([]);
   const [available, setAvailable] = useState<AvailableModel[]>([]);
   const [source, setSource] = useState("cache");
+  const [rates, setRates] = useState<ModelRate[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [output, setOutput] = useState<string | null>(null);
   const [newModel, setNewModel] = useState("");
@@ -53,13 +60,14 @@ export default function ModelsPage() {
 
   const load = () =>
     Promise.all([
-      api.get<{ managed: Managed[]; available: AvailableModel[]; source?: string }>("/models"),
+      api.get<{ managed: Managed[]; available: AvailableModel[]; source?: string; rates?: ModelRate[] }>("/models"),
       api.get<{ jobs: Job[] }>("/models/jobs"),
     ])
       .then(([m, j]) => {
         setManaged(m.managed);
         setAvailable(m.available as AvailableModel[]);
         setSource(m.source ?? "cache");
+        setRates(m.rates ?? []);
       })
       .catch((e: any) =>
         setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? "Failed to load models" })
@@ -73,6 +81,12 @@ export default function ModelsPage() {
     return () => clearInterval(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyDeploying]);
+
+  const rateFor = (name: string) =>
+    rates.find((r) => r.model_key.toLowerCase() === name.toLowerCase());
+  const cheapest = rates.length
+    ? rates.reduce((a, b) => (a.input_per_1m <= b.input_per_1m ? a : b))
+    : null;
 
   const lastJobFor = (name: string) =>
     jobs.find((j) => {
@@ -130,6 +144,12 @@ export default function ModelsPage() {
     <Grid narrow className="sf-content">
       <Column sm={4} md={8} lg={16}>
         <h3>Model Registry</h3>
+        {cheapest && (
+          <p className="sf-muted" style={{ marginBottom: "0.5rem" }}>
+            Cheapest observed input: <strong>{cheapest.model_key}</strong> @ $
+            {cheapest.input_per_1m}/1M tokens (from your bills)
+          </p>
+        )}
         {notice && (
           <InlineNotification
             kind={notice.kind}
@@ -162,6 +182,7 @@ export default function ModelsPage() {
             <StructuredListRow head>
               <StructuredListCell head>Model</StructuredListCell>
               <StructuredListCell head>Status</StructuredListCell>
+              <StructuredListCell head>$/1M in·out</StructuredListCell>
               <StructuredListCell head>Active</StructuredListCell>
               <StructuredListCell head>Actions</StructuredListCell>
             </StructuredListRow>
@@ -170,6 +191,7 @@ export default function ModelsPage() {
             {managed.map((m) => {
               const job = lastJobFor(m.model_name);
               const provisioning = m.status === "Deploying";
+              const rate = rateFor(m.model_name);
               return (
                 <StructuredListRow key={m.id}>
                   <StructuredListCell>{m.model_name}</StructuredListCell>
@@ -178,6 +200,18 @@ export default function ModelsPage() {
                       <InlineLoading description="provisioning…" />
                     ) : (
                       <Tag type={m.status === "Active" ? "green" : "gray"}>{m.status}</Tag>
+                    )}
+                  </StructuredListCell>
+                  <StructuredListCell>
+                    {rate ? (
+                      <span>
+                        ${rate.input_per_1m}·${rate.output_per_1m}{" "}
+                        {cheapest && rate.model_key === cheapest.model_key && (
+                          <Tag type="green">cheapest</Tag>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="sf-muted">—</span>
                     )}
                   </StructuredListCell>
                   <StructuredListCell>

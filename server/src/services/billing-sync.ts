@@ -20,7 +20,7 @@ import { sendChannel } from "./notifier.js";
  *   Credits   → total_amount < 0 (generic adjustments)
  *   Everything else → core compute
  */
-import { bucketOf, modelKeyOf, tokensOf } from "./billing-lines.js";
+import { bucketOf, modelKeyOf, tokensOf, ratesOf } from "./billing-lines.js";
 
 export function makeClient(vault: Vault): DOClient | null {
   const doToken = vault.get("do_token");
@@ -94,6 +94,7 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
           // 'credit' lines reduce the bill; no spend bucket.
         }
         writeBillingDaily(db, points);
+        upsertModelRates(db, points);
         breakdownJson = JSON.stringify(points.slice(0, 200));
       }
     } catch (e) {
@@ -159,10 +160,13 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
       `DELETE FROM billing_history WHERE ts < datetime('now', '-90 days')`
     ).run();
 
+    const spike = dailySpike(db);
     const breaches = evaluateThresholds({
       compute_balance: mtd,
       inference_balance: inferenceBalance ?? 0,
       spend_limit: spendLimit,
+      daily_spend_usd: spike.today,
+      daily_spend_spike: spike.ratio,
     });
     if (breaches.length > 0) {
       void notifyBreaches(breaches, (ch, msg) => sendChannel(ch, msg, vault));
@@ -238,6 +242,9 @@ export function writeBillingDaily(db: ReturnType<typeof getDb>, points: BillingD
   db.prepare(`DELETE FROM billing_daily WHERE day < date('now', '-400 days')`).run();
 }
 
+/** Model (spend) buckets in billing_daily — everything else is tax/credit/purchase noise. */
+const MODEL_BUCKETS = `model_key NOT IN ('tax','credit','ai_credit_purchase')`;
+
 /** Day totals + per-model split for charts. */
 export function dailySummary(days = 30) {
   const db = getDb();
@@ -258,4 +265,91 @@ export function dailySummary(days = 30) {
     completion_tokens: number;
   }>;
   return { days: rows };
+}
+
+/** Latest observed $/1M rates per model (latest annotation wins). */
+export function upsertModelRates(db: ReturnType<typeof getDb>, points: BillingDataPoint[]) {
+  const up = db.prepare(
+    `INSERT INTO model_rates (model_key, input_per_1m, output_per_1m, observed_at)
+     VALUES (?,?,?,datetime('now'))
+     ON CONFLICT(model_key) DO UPDATE SET
+       input_per_1m = COALESCE(excluded.input_per_1m, model_rates.input_per_1m),
+       output_per_1m = COALESCE(excluded.output_per_1m, model_rates.output_per_1m),
+       observed_at = excluded.observed_at`
+  );
+  const seen = new Map<string, { input?: number; output?: number }>();
+  for (const p of points) {
+    if (bucketOf(p) !== "ai") continue;
+    const key = modelKeyOf(p, "ai");
+    if (key === "other-ai") continue;
+    const r = ratesOf(p);
+    if (r.input === undefined && r.output === undefined) continue;
+    const cur = seen.get(key) ?? {};
+    if (r.input !== undefined) cur.input = r.input;
+    if (r.output !== undefined) cur.output = r.output;
+    seen.set(key, cur);
+  }
+  for (const [key, r] of seen) {
+    up.run(key, r.input ?? null, r.output ?? null);
+  }
+}
+
+export function listModelRates() {
+  return getDb().prepare("SELECT * FROM model_rates ORDER BY model_key").all();
+}
+
+/** Today's AI-model spend + ratio vs prior-7-day mean (null ratio = no baseline). */
+export function dailySpike(db: ReturnType<typeof getDb>): { today: number; ratio: number | null } {
+  const todayRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_usd), 0) AS total FROM billing_daily
+       WHERE day = date('now') AND ${MODEL_BUCKETS}`
+    )
+    .get() as { total: number };
+  const meanRow = db
+    .prepare(
+      `SELECT COALESCE(AVG(daily), 0) AS mean FROM (
+         SELECT SUM(amount_usd) AS daily FROM billing_daily
+         WHERE day >= date('now', '-8 days') AND day < date('now') AND ${MODEL_BUCKETS}
+         GROUP BY day
+       )`
+    )
+    .get() as { mean: number };
+  const today = round6(todayRow.total);
+  const ratio = meanRow.mean > 0 ? round6(today / meanRow.mean) : null;
+  return { today, ratio };
+}
+
+/** Month-end projection + days of manual credit left (MONITORING.md §A2). */
+export function forecastSummary() {
+  const db = getDb();
+  const now = new Date();
+  const elapsed = Math.max(1, now.getUTCDate());
+  const dim = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+  const mtdRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(amount_usd), 0) AS total FROM billing_daily
+       WHERE day >= date('now', 'start of month') AND ${MODEL_BUCKETS}`
+    )
+    .get() as { total: number };
+  const mtd = round6(mtdRow.total);
+  const rate = round6(mtd / elapsed);
+  const credit = db
+    .prepare("SELECT ai_credit_remaining, ai_credit_as_of FROM app_settings WHERE id='singleton'")
+    .get() as { ai_credit_remaining: number | null; ai_credit_as_of: string | null };
+  return {
+    month: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`,
+    elapsed_days: elapsed,
+    days_in_month: dim,
+    mtd_ai_usd: mtd,
+    daily_rate_usd: rate,
+    projected_month_end_usd: round6(rate * dim),
+    credit_remaining_usd: credit?.ai_credit_remaining ?? null,
+    credit_as_of: credit?.ai_credit_as_of ?? null,
+    days_of_credit_left:
+      rate > 0 && credit?.ai_credit_remaining != null
+        ? Math.floor(credit.ai_credit_remaining / rate)
+        : null,
+    basis: "billing_daily model spend (nightly insights) + manual credit remainder",
+  };
 }

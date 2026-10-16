@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { billingSummary, dailySummary, syncBilling } from "../../services/billing-sync.js";
+import { billingSummary, dailySummary, forecastSummary, syncBilling } from "../../services/billing-sync.js";
 import type { Vault } from "../../services/vault.js";
 import { ingestTelemetry, burnRateSeries, costByModel, verifyIngestAuth } from "./telemetry-helpers.js";
 
@@ -12,6 +12,8 @@ export function billingRoutes(vault: Vault): Hono {
     const days = parseInt(c.req.query("days") ?? "30", 10);
     return c.json(dailySummary(days));
   });
+
+  app.get("/forecast", (c) => c.json(forecastSummary()));
 
   app.post("/sync", async (c) => {
     const r = await syncBilling(vault);

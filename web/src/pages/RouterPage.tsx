@@ -60,6 +60,10 @@ export default function RouterPage() {
   // ---- local offline-advisor rules ----
   const [rules, setRules] = useState<Rule[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const [cheapestRate, setCheapestRate] = useState<{
+    model_key: string;
+    input_per_1m: number;
+  } | null>(null);
   const [snapshots, setSnapshots] = useState<any[]>([]);
   const [ruleName, setRuleName] = useState("");
   const [ruleModel, setRuleModel] = useState("");
@@ -78,7 +82,7 @@ export default function RouterPage() {
   const loadLocal = () =>
     Promise.all([
       api.get<{ rules: Rule[] }>("/router/rules"),
-      api.get<{ available: any[]; managed: any[] }>("/models"),
+      api.get<{ available: any[]; managed: any[]; rates?: any[] }>("/models"),
       api.get<{ snapshots: any[] }>("/router/snapshots"),
     ])
       .then(([r, m, s]) => {
@@ -87,6 +91,12 @@ export default function RouterPage() {
         (m.available as any[]).forEach((x: any) => names.add(x.name ?? x.id));
         (m.managed as any[]).forEach((x: any) => names.add(x.model_name));
         setModels(Array.from(names).sort());
+        const rates = (m.rates ?? []) as any[];
+        setCheapestRate(
+          rates.length
+            ? rates.reduce((a, b) => (a.input_per_1m <= b.input_per_1m ? a : b))
+            : null
+        );
         setSnapshots(s.snapshots as any[]);
       })
       .catch(() => {});
@@ -214,6 +224,12 @@ export default function RouterPage() {
           models, selection strategy). DigitalOcean no longer exposes these in the
           control panel, so edits made here are pushed straight to the API.
         </p>
+        {cheapestRate && (
+          <p className="sf-muted" style={{ marginTop: "0.5rem" }}>
+            Cheapest observed input (from your bills): <strong>{cheapestRate.model_key}</strong>{" "}
+            @ ${cheapestRate.input_per_1m}/1M tokens
+          </p>
+        )}
       </Column>
 
       {notice && (

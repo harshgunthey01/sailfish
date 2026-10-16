@@ -4,6 +4,10 @@ export interface ThresholdContext {
   compute_balance: number;
   inference_balance: number;
   spend_limit: number | null;
+  /** Today's AI-model spend (USD, billing_daily model buckets). */
+  daily_spend_usd?: number | null;
+  /** Today's spend ÷ prior-7-day mean (null when no baseline). */
+  daily_spend_spike?: number | null;
 }
 
 type Channel = "smtp" | "slack" | "gchat";
@@ -25,10 +29,14 @@ export function evaluateThresholds(ctx: ThresholdContext): string[] {
         ? ctx.compute_balance
         : t.metric === "inference_balance"
           ? ctx.inference_balance
-          : ctx.spend_limit !== null
-            ? (ctx.inference_balance / Math.max(ctx.spend_limit, 0.000001)) * 100
-            : null;
-    if (actual === null) continue;
+          : t.metric === "daily_spend_usd"
+            ? (ctx.daily_spend_usd ?? null)
+            : t.metric === "daily_spend_spike"
+              ? (ctx.daily_spend_spike ?? null)
+              : ctx.spend_limit !== null
+                ? (ctx.inference_balance / Math.max(ctx.spend_limit, 0.000001)) * 100
+                : null;
+    if (actual === null || actual === undefined) continue;
 
     const hit = t.operator === "gt" ? actual > t.value : actual < t.value;
     if (!hit) continue;

@@ -173,10 +173,18 @@ function migrate(d: DatabaseSync) {
   );
   CREATE INDEX IF NOT EXISTS idx_password_resets_hash ON password_resets(token_hash);
 
+  -- live observed $/1M rates from insights "@ $P/thousand" annotations
+  CREATE TABLE IF NOT EXISTS model_rates (
+    model_key TEXT PRIMARY KEY,
+    input_per_1m REAL NOT NULL,
+    output_per_1m REAL NOT NULL,
+    observed_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS thresholds (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    metric TEXT NOT NULL CHECK (metric IN ('compute_balance','inference_balance','inference_remaining_pct')),
+    metric TEXT NOT NULL CHECK (metric IN ('compute_balance','inference_balance','inference_remaining_pct','daily_spend_usd','daily_spend_spike')),
     operator TEXT NOT NULL CHECK (operator IN ('gt','lt')),
     value REAL NOT NULL,
     channels_json TEXT NOT NULL DEFAULT '[]',
@@ -213,6 +221,29 @@ function migrate(d: DatabaseSync) {
   addColumnIfMissing(d, "telemetry_hourly", "task", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(d, "app_settings", "ai_credit_remaining", "REAL");
   addColumnIfMissing(d, "app_settings", "ai_credit_as_of", "TEXT");
+
+  // SQLite cannot ALTER a CHECK constraint: rebuild thresholds once to widen
+  // the metric set for Phase-2 spike metrics. Existing rows are preserved.
+  const tSql = (d.prepare("SELECT sql FROM sqlite_master WHERE name='thresholds'").get() as any)?.sql ?? "";
+  if (!tSql.includes("daily_spend_spike")) {
+    d.exec(`
+    CREATE TABLE thresholds_new (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      metric TEXT NOT NULL CHECK (metric IN ('compute_balance','inference_balance','inference_remaining_pct','daily_spend_usd','daily_spend_spike')),
+      operator TEXT NOT NULL CHECK (operator IN ('gt','lt')),
+      value REAL NOT NULL,
+      channels_json TEXT NOT NULL DEFAULT '[]',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      last_triggered_at TEXT,
+      cooldown_minutes INTEGER NOT NULL DEFAULT 60
+    );
+    INSERT INTO thresholds_new (id, name, metric, operator, value, channels_json, is_active, last_triggered_at, cooldown_minutes)
+      SELECT id, name, metric, operator, value, channels_json, is_active, last_triggered_at, cooldown_minutes FROM thresholds;
+    DROP TABLE thresholds;
+    ALTER TABLE thresholds_new RENAME TO thresholds;
+    `);
+  }
 }
 
 function addColumnIfMissing(d: DatabaseSync, table: string, column: string, def: string) {

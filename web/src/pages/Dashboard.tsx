@@ -37,6 +37,16 @@ export default function Dashboard() {
   const [series, setSeries] = useState<any[]>([]);
   const [byModel, setByModel] = useState<any[]>([]);
   const [daily, setDaily] = useState<any[]>([]);
+  const [forecast, setForecast] = useState<{
+    daily_rate_usd: number;
+    projected_month_end_usd: number;
+    days_in_month: number;
+    month: string;
+    credit_remaining_usd: number | null;
+    credit_as_of: string | null;
+    days_of_credit_left: number | null;
+    basis: string;
+  } | null>(null);
   const [credit, setCredit] = useState<{ remaining: number | null; as_of: string | null }>({
     remaining: null,
     as_of: null,
@@ -50,13 +60,24 @@ export default function Dashboard() {
       api.get<{ by_model: any[] }>("/telemetry/by-model?days=7"),
       api.get<{ days: any[] }>("/billing/daily?days=30"),
       api.get<{ remaining: number | null; as_of: string | null }>("/setup/credit"),
+      api.get<{
+        daily_rate_usd: number;
+        projected_month_end_usd: number;
+        days_in_month: number;
+        month: string;
+        credit_remaining_usd: number | null;
+        credit_as_of: string | null;
+        days_of_credit_left: number | null;
+        basis: string;
+      }>("/billing/forecast"),
     ])
-      .then(([b, s, m, d, c]) => {
+      .then(([b, s, m, d, c, f]) => {
         setBilling(b);
         setSeries(s.series);
         setByModel(m.by_model as any[]);
         setDaily(d.days);
         setCredit(c);
+        setForecast(f);
       })
       .catch(() => {});
 
@@ -189,6 +210,18 @@ export default function Dashboard() {
             <div className="sf-muted">Live credit balance is on your DO billing page</div>
           )}
         </ClickableTile>
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        {forecast ? (
+          <p className="sf-muted" style={{ margin: "0.25rem 0 0" }}>
+            ≈ ${forecast.daily_rate_usd.toFixed(2)}/day → ${forecast.projected_month_end_usd.toFixed(2)} by{" "}
+            {forecast.month}-{String(forecast.days_in_month).padStart(2, "0")}
+            {forecast.days_of_credit_left != null && forecast.credit_as_of
+              ? ` · ~${forecast.days_of_credit_left} days of credit left (as of ${forecast.credit_as_of})`
+              : " · set AI credit in Settings for days-left"}
+          </p>
+        ) : null}
       </Column>
 
       <Column sm={4} md={8} lg={16}>

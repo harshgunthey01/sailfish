@@ -36,7 +36,18 @@ export const PRICING: Record<string, PriceRow> = {
 export const FALLBACK_PRICE: PriceRow = { input: 0.5, output: 0.5 };
 
 export function priceFor(modelId: string): PriceRow {
-  return PRICING[modelId.toLowerCase()] ?? FALLBACK_PRICE;
+  const curated = PRICING[modelId.toLowerCase()];
+  if (curated) return curated;
+  // Live observed rates (MONITORING.md §A4) beat the static fallback for new models.
+  try {
+    const row = getDb()
+      .prepare("SELECT input_per_1m, output_per_1m FROM model_rates WHERE model_key = ?")
+      .get(modelId.toLowerCase()) as { input_per_1m: number; output_per_1m: number } | undefined;
+    if (row) return { input: row.input_per_1m, output: row.output_per_1m };
+  } catch {
+    /* table may not exist yet on very old DBs before migration */
+  }
+  return FALLBACK_PRICE;
 }
 
 export function costUsd(modelId: string, promptTokens: number, completionTokens: number): number {
