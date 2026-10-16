@@ -56,6 +56,10 @@ export default function SettingsPage() {
   const [modelKey, setModelKey] = useState("");
   const [doTest, setDoTest] = useState<string | null>(null);
 
+  // ---- AI credit remainder (manual: copied from DO's billing page) ----
+  const [creditRemaining, setCreditRemaining] = useState("");
+  const [creditAsOf, setCreditAsOf] = useState<string | null>(null);
+
   // new threshold form
   const [tName, setTName] = useState("");
   const [tMetric, setTMetric] = useState("compute_balance");
@@ -83,8 +87,9 @@ export default function SettingsPage() {
       api.get<{ setup_complete: boolean; smtp_configured: boolean; do_auth_configured: boolean }>(
         "/setup/status"
       ),
+      api.get<{ remaining: number | null; as_of: string | null }>("/setup/credit"),
     ])
-      .then(([l, t, me, smtp, st]) => {
+      .then(([l, t, me, smtp, st, credit]) => {
         setLog(l.log as any[]);
         setThresholds(t.thresholds as Threshold[]);
         if (me.authenticated) setAdminEmail(me.email ?? "");
@@ -96,6 +101,8 @@ export default function SettingsPage() {
         setSlackWebhook(smtp.slack_webhook);
         setGchatWebhook(smtp.gchat_webhook);
         setDoConfigured(st.do_auth_configured);
+        if (credit.remaining != null) setCreditRemaining(String(credit.remaining));
+        setCreditAsOf(credit.as_of);
       })
       .catch(() => {});
 
@@ -289,6 +296,41 @@ export default function SettingsPage() {
             }
           >
             {busy ? <InlineLoading /> : "Test connection"}
+          </Button>
+        </div>
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>AI credit remaining (manual)</h5>
+        <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+          DigitalOcean exposes no API for the live AI-credit balance — copy it from
+          DO&apos;s billing page. Saved with today&apos;s date.
+          {creditAsOf ? ` Currently $${creditRemaining || "—"} as of ${creditAsOf}.` : ""}
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}>
+          <NumberInput
+            id="credit-remaining"
+            label="Remaining credit ($)"
+            value={creditRemaining === "" ? 0 : Number(creditRemaining)}
+            min={0}
+            onChange={(e: any) => setCreditRemaining(e.target.value)}
+          />
+          <Button
+            kind="primary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const r = await api.post<{ ok: boolean; remaining: number; as_of: string }>(
+                  "/setup/credit",
+                  { remaining: Number(creditRemaining) }
+                );
+                setCreditRemaining(String(r.remaining));
+                setCreditAsOf(r.as_of);
+                setNotice({ kind: "success", text: `AI credit saved: $${r.remaining} as of ${r.as_of}.` });
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Save credit balance"}
           </Button>
         </div>
       </Column>

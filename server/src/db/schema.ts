@@ -35,7 +35,9 @@ function migrate(d: DatabaseSync) {
     model_id TEXT NOT NULL,
     prompt_tokens INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
-    total_cost_usd REAL NOT NULL DEFAULT 0
+    total_cost_usd REAL NOT NULL DEFAULT 0,
+    router TEXT,
+    task TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry_logs(timestamp);
   CREATE INDEX IF NOT EXISTS idx_telemetry_model ON telemetry_logs(model_id);
@@ -75,7 +77,9 @@ function migrate(d: DatabaseSync) {
     id TEXT PRIMARY KEY,
     setup_complete INTEGER NOT NULL DEFAULT 0,
     smtp_configured INTEGER NOT NULL DEFAULT 0,
-    do_auth_configured INTEGER NOT NULL DEFAULT 0
+    do_auth_configured INTEGER NOT NULL DEFAULT 0,
+    ai_credit_remaining REAL,
+    ai_credit_as_of TEXT
   );
 
   -- ===== extensions (see ARCHITECTURE.md §7) =====
@@ -104,6 +108,19 @@ function migrate(d: DatabaseSync) {
   );
   CREATE INDEX IF NOT EXISTS idx_billing_history_ts ON billing_history(ts);
 
+  -- per-day per-SKU billing lines (Phase-1 spend history; ~50 rows/day)
+  CREATE TABLE IF NOT EXISTS billing_daily (
+    day TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    model_key TEXT NOT NULL,
+    description TEXT NOT NULL,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    amount_usd REAL NOT NULL,
+    PRIMARY KEY (day, sku, description)
+  );
+  CREATE INDEX IF NOT EXISTS idx_billing_daily_day ON billing_daily(day);
+
   CREATE TABLE IF NOT EXISTS telemetry_hourly (
     hour_ts TEXT NOT NULL,
     model_id TEXT NOT NULL,
@@ -111,6 +128,10 @@ function migrate(d: DatabaseSync) {
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0,
     requests INTEGER NOT NULL DEFAULT 0,
+    -- router/task detail lives in telemetry_logs; hourly stays model-grain
+    -- (per-router rollups are computed from logs; see MONITORING.md §D).
+    router TEXT NOT NULL DEFAULT '',
+    task TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (hour_ts, model_id)
   );
 
@@ -186,6 +207,12 @@ function migrate(d: DatabaseSync) {
   addColumnIfMissing(d, "billing_state", "breakdown_json", "TEXT");
   addColumnIfMissing(d, "billing_history", "core_compute_mtd", "REAL NOT NULL DEFAULT 0");
   addColumnIfMissing(d, "billing_history", "ai_usage_mtd", "REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(d, "telemetry_logs", "router", "TEXT");
+  addColumnIfMissing(d, "telemetry_logs", "task", "TEXT");
+  addColumnIfMissing(d, "telemetry_hourly", "router", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(d, "telemetry_hourly", "task", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(d, "app_settings", "ai_credit_remaining", "REAL");
+  addColumnIfMissing(d, "app_settings", "ai_credit_as_of", "TEXT");
 }
 
 function addColumnIfMissing(d: DatabaseSync, table: string, column: string, def: string) {

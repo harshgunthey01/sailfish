@@ -36,6 +36,11 @@ export default function Dashboard() {
   const [billing, setBilling] = useState<BillingSummary | null>(null);
   const [series, setSeries] = useState<any[]>([]);
   const [byModel, setByModel] = useState<any[]>([]);
+  const [daily, setDaily] = useState<any[]>([]);
+  const [credit, setCredit] = useState<{ remaining: number | null; as_of: string | null }>({
+    remaining: null,
+    as_of: null,
+  });
   const [syncing, setSyncing] = useState(false);
 
   const load = () =>
@@ -43,11 +48,15 @@ export default function Dashboard() {
       api.get<BillingSummary>("/billing/summary"),
       api.get<{ series: any[] }>("/telemetry/series?days=7"),
       api.get<{ by_model: any[] }>("/telemetry/by-model?days=7"),
+      api.get<{ days: any[] }>("/billing/daily?days=30"),
+      api.get<{ remaining: number | null; as_of: string | null }>("/setup/credit"),
     ])
-      .then(([b, s, m]) => {
+      .then(([b, s, m, d, c]) => {
         setBilling(b);
         setSeries(s.series);
         setByModel(m.by_model as any[]);
+        setDaily(d.days);
+        setCredit(c);
       })
       .catch(() => {});
 
@@ -75,6 +84,20 @@ export default function Dashboard() {
         value: Math.round((r.cost ?? 0) * 1e6) / 1e6,
       })),
     [byModel]
+  );
+
+  // Stacked daily spend by model (billing_daily). Non-model buckets (tax,
+  // credits, one-off purchases) are excluded so model trends stay readable.
+  const dailyData = useMemo(
+    () =>
+      (daily as any[])
+        .filter((r: any) => !["tax", "credit", "ai_credit_purchase"].includes(r.model_key))
+        .map((r: any) => ({
+          group: r.model_key,
+          date: new Date(r.day + "T00:00:00Z").getTime(),
+          value: Math.round((r.amount ?? 0) * 1e6) / 1e6,
+        })),
+    [daily]
   );
 
   const s = billing?.state;
@@ -158,7 +181,13 @@ export default function Dashboard() {
           ) : (
             <div className="sf-muted">no payments recorded</div>
           )}
-          <div className="sf-muted">Live credit balance is on your DO billing page</div>
+          {credit.remaining != null ? (
+            <div className="sf-muted">
+              AI credit left: ${credit.remaining.toFixed(2)} (DO page{credit.as_of ? `, ${credit.as_of}` : ""})
+            </div>
+          ) : (
+            <div className="sf-muted">Live credit balance is on your DO billing page</div>
+          )}
         </ClickableTile>
       </Column>
 
@@ -196,6 +225,30 @@ export default function Dashboard() {
           />
         ) : (
           <p className="sf-muted">No spend recorded yet.</p>
+        )}
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1rem 0 0.5rem" }}>Spend by model over time (30 days)</h5>
+        {dailyData.length > 0 ? (
+          <AreaChart
+            key={`daily-${chartTheme}`}
+            data={dailyData}
+            options={{
+              theme: chartTheme,
+              axes: {
+                left: { mapsTo: "value", stacked: true },
+                bottom: { scaleType: "time", mapsTo: "date" },
+              },
+              height: "260px",
+              curve: "curveMonotoneX",
+            } as any}
+          />
+        ) : (
+          <p className="sf-muted">
+            No daily billing history yet — it accumulates with each sync (backfilled from
+            DigitalOcean insights).
+          </p>
         )}
       </Column>
     </Grid>

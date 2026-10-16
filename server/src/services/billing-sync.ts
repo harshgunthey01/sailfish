@@ -1,5 +1,6 @@
 import { getDb, newId, nowIso } from "../db/schema.js";
 import { DOClient } from "../do/client.js";
+import type { BillingDataPoint } from "../do/client.js";
 import type { Vault } from "./vault.js";
 import { evaluateThresholds } from "./thresholds.js";
 import { notifyBreaches } from "./thresholds.js";
@@ -19,9 +20,7 @@ import { sendChannel } from "./notifier.js";
  *   Credits   → total_amount < 0 (generic adjustments)
  *   Everything else → core compute
  */
-const AI_USAGE_PREFIX = "1-AI-";
-const AI_CREDIT_PREFIX = "1-DO-AI";
-const TAX_SKU_PREFIX = "1-DO-ADJMT-00TAX";
+import { bucketOf, modelKeyOf, tokensOf } from "./billing-lines.js";
 
 export function makeClient(vault: Vault): DOClient | null {
   const doToken = vault.get("do_token");
@@ -84,17 +83,17 @@ export async function syncBilling(vault: Vault): Promise<SyncResult> {
 
         for (const p of points) {
           const amount = parseFloat(p.total_amount) || 0;
-          const sku = (p.sku ?? "").toUpperCase();
-          if (sku.startsWith(TAX_SKU_PREFIX)) {
+          const bucket = bucketOf(p);
+          if (bucket === "tax") {
             taxMtd += amount;
-          } else if (sku.startsWith(AI_USAGE_PREFIX) || sku.startsWith(AI_CREDIT_PREFIX)) {
+          } else if (bucket === "ai" || bucket === "ai_credit") {
             aiUsageMtd += amount;
-          } else if (amount < 0) {
-            // Credits / generic adjustments — no bucket (they reduce the bill but aren't "core compute")
-          } else {
+          } else if (bucket === "core") {
             coreComputeMtd += amount;
           }
+          // 'credit' lines reduce the bill; no spend bucket.
         }
+        writeBillingDaily(db, points);
         breakdownJson = JSON.stringify(points.slice(0, 200));
       }
     } catch (e) {
@@ -208,4 +207,55 @@ export function billingSummary() {
 
 function round6(n: number): number {
   return Math.round(n * 1e6) / 1e6;
+}
+
+/** Persist one insights pull into billing_daily (idempotent upsert). */
+export function writeBillingDaily(db: ReturnType<typeof getDb>, points: BillingDataPoint[]) {
+  const upsert = db.prepare(
+    `INSERT INTO billing_daily (day, sku, model_key, description, prompt_tokens, completion_tokens, amount_usd)
+     VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT(day, sku, description) DO UPDATE SET
+       model_key = excluded.model_key,
+       prompt_tokens = excluded.prompt_tokens,
+       completion_tokens = excluded.completion_tokens,
+       amount_usd = excluded.amount_usd`
+  );
+  for (const p of points) {
+    const day = (p.start_date ?? "").slice(0, 10);
+    if (!day) continue;
+    const bucket = bucketOf(p);
+    const { pt, ct } = tokensOf(p);
+    upsert.run(
+      day,
+      p.sku ?? "",
+      modelKeyOf(p, bucket),
+      p.description ?? "",
+      pt,
+      ct,
+      round6(parseFloat(p.total_amount) || 0)
+    );
+  }
+  db.prepare(`DELETE FROM billing_daily WHERE day < date('now', '-400 days')`).run();
+}
+
+/** Day totals + per-model split for charts. */
+export function dailySummary(days = 30) {
+  const db = getDb();
+  const d = Math.min(Math.max(days, 1), 400);
+  const rows = db
+    .prepare(
+      `SELECT day, model_key, SUM(amount_usd) AS amount,
+              SUM(prompt_tokens) AS prompt_tokens, SUM(completion_tokens) AS completion_tokens
+       FROM billing_daily
+       WHERE day >= date('now', ?)
+       GROUP BY day, model_key ORDER BY day ASC`
+    )
+    .all(`-${d} days`) as Array<{
+    day: string;
+    model_key: string;
+    amount: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+  }>;
+  return { days: rows };
 }

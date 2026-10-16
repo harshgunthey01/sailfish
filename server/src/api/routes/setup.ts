@@ -279,6 +279,27 @@ export function setupRoutes(vault: Vault): Hono {
     return c.json({ ok: true });
   });
 
+  // Manual AI-credit remainder, copied from DO's billing page (no API exposes it).
+  gated.get("/credit", (c) => {
+    const s = getDb()
+      .prepare("SELECT ai_credit_remaining, ai_credit_as_of FROM app_settings WHERE id='singleton'")
+      .get() as { ai_credit_remaining: number | null; ai_credit_as_of: string | null };
+    return c.json({ remaining: s?.ai_credit_remaining ?? null, as_of: s?.ai_credit_as_of ?? null });
+  });
+
+  gated.post("/credit", async (c) => {
+    const body = await c.req.json<{ remaining?: number; as_of?: string }>();
+    const remaining = Number(body.remaining);
+    if (!Number.isFinite(remaining) || remaining < 0)
+      return c.json({ error: "remaining must be a non-negative number" }, 400);
+    const asOf = (body.as_of ?? "").trim() || new Date().toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return c.json({ error: "as_of must be YYYY-MM-DD" }, 400);
+    getDb()
+      .prepare("UPDATE app_settings SET ai_credit_remaining = ?, ai_credit_as_of = ? WHERE id='singleton'")
+      .run(Math.round(remaining * 100) / 100, asOf);
+    return c.json({ ok: true, remaining: Math.round(remaining * 100) / 100, as_of: asOf });
+  });
+
   gated.post("/complete", (c) => {    const s = getDb().prepare("SELECT * FROM app_settings WHERE id='singleton'").get() as any;
     // Notifications are optional; admin + DigitalOcean credentials are required.
     if (!adminExists() || !s.do_auth_configured)

@@ -49,6 +49,8 @@ export function ingestTelemetry(e: {
   prompt_tokens: number;
   completion_tokens: number;
   ts?: string;
+  router?: string;
+  task?: string;
 }): { id: string; total_cost_usd: number } {
   const db = getDb();
   const ts = e.ts ?? nowIso();
@@ -56,9 +58,9 @@ export function ingestTelemetry(e: {
   const id = newId();
 
   db.prepare(
-    `INSERT INTO telemetry_logs (id, timestamp, model_id, prompt_tokens, completion_tokens, total_cost_usd)
-     VALUES (?,?,?,?,?,?)`
-  ).run(id, ts, e.model_id, e.prompt_tokens, e.completion_tokens, cost);
+    `INSERT INTO telemetry_logs (id, timestamp, model_id, prompt_tokens, completion_tokens, total_cost_usd, router, task)
+     VALUES (?,?,?,?,?,?,?,?)`
+  ).run(id, ts, e.model_id, e.prompt_tokens, e.completion_tokens, cost, e.router ?? null, e.task ?? null);
 
   const hour = ts.slice(0, 13) + ":00:00.000Z";
   db.prepare(

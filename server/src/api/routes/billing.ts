@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { billingSummary, syncBilling } from "../../services/billing-sync.js";
+import { billingSummary, dailySummary, syncBilling } from "../../services/billing-sync.js";
 import type { Vault } from "../../services/vault.js";
 import { ingestTelemetry, burnRateSeries, costByModel, verifyIngestAuth } from "./telemetry-helpers.js";
 
@@ -7,6 +7,11 @@ export function billingRoutes(vault: Vault): Hono {
   const app = new Hono();
 
   app.get("/summary", (c) => c.json(billingSummary()));
+
+  app.get("/daily", (c) => {
+    const days = parseInt(c.req.query("days") ?? "30", 10);
+    return c.json(dailySummary(days));
+  });
 
   app.post("/sync", async (c) => {
     const r = await syncBilling(vault);
@@ -32,6 +37,8 @@ export function telemetryRoutes(vault: Vault): Hono {
       prompt_tokens?: number;
       completion_tokens?: number;
       ts?: string;
+      router?: string;
+      task?: string;
     }>();
     if (!body.model_id || body.prompt_tokens === undefined || body.completion_tokens === undefined)
       return c.json({ error: "model_id, prompt_tokens, completion_tokens required" }, 400);
@@ -40,6 +47,8 @@ export function telemetryRoutes(vault: Vault): Hono {
       prompt_tokens: Math.max(0, Math.floor(body.prompt_tokens)),
       completion_tokens: Math.max(0, Math.floor(body.completion_tokens)),
       ts: body.ts,
+      router: typeof body.router === "string" ? body.router.slice(0, 120) : undefined,
+      task: typeof body.task === "string" ? body.task.slice(0, 120) : undefined,
     });
     return c.json(r);
   });
