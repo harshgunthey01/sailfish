@@ -21,10 +21,17 @@ import { ToastProvider, useNotifications } from "./toast";
 /** Hand-drawn megaphone (Carbon icons-react has no megaphone in this version). */
 function MegaphoneIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path d="M2.5 8.5v3H6l6.5 3.5v-10L6 8.5H2.5z" fill="currentColor" />
-      <path d="M14.5 4.5v11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M6.8 12.3 6 17h2.4l1-4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M2 8.2 13.5 3.8v12.4L2 11.8V8.2z" fill="currentColor" />
+      <path d="M15.5 3.2v13.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M18 6.5c1.2 1.6 1.2 5.4 0 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path
+        d="M6.5 12.2 5.6 18h2.6l.9-5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
