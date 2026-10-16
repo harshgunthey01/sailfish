@@ -78,6 +78,13 @@ function Shell() {
         >
           <Menu />
         </HeaderGlobalAction>
+        <img
+          src="/favicon.svg"
+          alt="Sailfish"
+          width={26}
+          height={26}
+          style={{ marginLeft: "0.25rem", flexShrink: 0 }}
+        />
         <HeaderName prefix="">Sailfish</HeaderName>
         <HeaderNavigation aria-label="Main">
           <HeaderMenuItem onClick={() => navigate("/")}>Dashboard</HeaderMenuItem>
