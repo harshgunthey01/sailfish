@@ -170,3 +170,62 @@ The router API will never report usage, so enrich **our** telemetry:
 3. `billing_daily` backfill depth: re-parse stored `breakdown_json` only, or
    re-fetch 90 days of insights once? (Recommendation: re-fetch once —
    one-time cost, full history.)
+
+---
+
+## Phase 4 — Cache effectiveness (specified, not built)
+
+**Why:** the Oct bills show ~14M DeepSeek cache-read tokens vs ~5M regular
+input — caching is already the largest cost lever, and nothing surfaces it.
+
+### Definitions (locked)
+
+- `hit_ratio = cache_read_tokens / (cache_read_tokens + regular_input_tokens)`
+  per model and account-wide. Outputs are never cacheable and are excluded.
+- `est_savings_usd = cache_read_tokens × (input_per_1m − cache_read_per_1m) / 1e6`
+  using observed rates; a model without both rates is listed with "rate
+  unknown" and excluded from the savings total (never silently estimated).
+- Only descriptions containing **"read"** count as hits. Any other "cache"
+  line (e.g. future cache-creation/write SKUs, which cost *more* than base
+  input) is bucketed `cache_other`: shown separately, excluded from ratio and
+  savings. Revisit if creation lines ever appear in the bills (none seen yet).
+
+### Schema
+
+- `model_rates` gains `cache_per_1m REAL NULLABLE` (ALTER migration via the
+  existing `addColumnIfMissing` helper — the table already exists from Phase 2).
+- `ratesOf()` in `billing-lines.ts` additionally returns `{ cache }` when the
+  description contains "cache"; `upsertModelRates()` merges the third leg with
+  the same COALESCE pattern. No changes to `billing_daily` (token counts for
+  cache lines are already stored).
+
+### API
+
+`GET /billing/cache?days=30` →
+
+```json
+{
+  "overall": { "hit_ratio": 0.73, "cache_tokens": 14086400, "est_savings_usd": 1.58 },
+  "by_model": [
+    { "model_key": "deepseek-4-flash", "hit_ratio": 0.8, "cache_tokens": 14086400,
+      "input_tokens": 3228315, "est_savings_usd": 1.58, "rates": "observed" }
+  ]
+}
+```
+
+computed from `billing_daily` (token sums) × `model_rates`. Models with cache
+lines but incomplete rates appear with `rates: "unknown"` and no savings.
+
+### UI
+
+- Dashboard tile next to Cost Distribution: "Cache hit ratio (30d)" big number
+  = overall ratio, sub-line "≈ $X saved vs full input price".
+- Per-model mini-table under it (model · hit % · cache tokens · saved $).
+- No alerts in v1 (spike engine covers spend; cache-ratio alerting is a
+  follow-up if ratio drops are ever observed to matter).
+
+### Acceptance
+
+1. Ratios recomputed by hand from `billing_daily` match the endpoint.
+2. A model with no cache lines shows "no cache data", never 0%.
+3. Savings total equals the sum of per-model savings (no hidden remainder).
