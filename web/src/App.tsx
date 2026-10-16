@@ -12,10 +12,29 @@ import {
   SideNavLink,
   Content,
   Button,
+  Tag,
 } from "@carbon/react";
 import { Asleep, Awake, Menu } from "@carbon/icons-react";
 import { ThemeProvider, useAppTheme } from "./theme";
-import { ToastProvider } from "./toast";
+import { ToastProvider, useNotifications } from "./toast";
+
+/** Hand-drawn megaphone (Carbon icons-react has no megaphone in this version). */
+function MegaphoneIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M2.5 8.5v3H6l6.5 3.5v-10L6 8.5H2.5z" fill="currentColor" />
+      <path d="M14.5 4.5v11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M6.8 12.3 6 17h2.4l1-4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function tagFor(kind: string) {
+  if (kind === "success") return "green";
+  if (kind === "error") return "red";
+  if (kind === "info") return "blue";
+  return "magenta";
+}
 import { api } from "./api";
 import SetupWizard from "./pages/SetupWizard";
 import Dashboard from "./pages/Dashboard";
@@ -44,6 +63,8 @@ function useSetupStatus() {
 function Shell() {
   const { dark, toggle } = useAppTheme();
   const [navOpen, setNavOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const { history, unread, refresh: refreshNotif, markRead, clear } = useNotifications();
   const [authed, setAuthed] = useState<boolean | null>(null);
   const { status, refresh } = useSetupStatus();
   const navigate = useNavigate();
@@ -101,6 +122,25 @@ function Shell() {
           <HeaderMenuItem onClick={() => navigate("/settings")}>Settings</HeaderMenuItem>
         </HeaderNavigation>
         <HeaderGlobalBar>
+          <HeaderGlobalAction
+            aria-label="Notifications"
+            onClick={() => {
+              setPanelOpen((o) => {
+                if (!o) {
+                  markRead();
+                  refreshNotif();
+                }
+                return !o;
+              });
+            }}
+          >
+            <span className="sf-bell-wrap">
+              <MegaphoneIcon />
+              {unread > 0 && (
+                <span className="sf-bell-badge">{unread > 9 ? "9+" : unread}</span>
+              )}
+            </span>
+          </HeaderGlobalAction>
           <HeaderGlobalAction aria-label="Toggle theme" onClick={toggle}>
             {dark ? <Awake /> : <Asleep />}
           </HeaderGlobalAction>
@@ -126,6 +166,36 @@ function Shell() {
           </SideNavItems>
         </SideNav>
       </Header>
+      {panelOpen && (
+        <div className="sf-notif-panel" role="dialog" aria-label="Notifications">
+          <div className="sf-notif-head">
+            <strong>Notifications</strong>
+            <div style={{ display: "flex", gap: "0.25rem" }}>
+              <Button kind="ghost" size="sm" onClick={clear}>
+                Clear
+              </Button>
+              <Button kind="ghost" size="sm" onClick={() => setPanelOpen(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+          <div className="sf-notif-list">
+            {history.length === 0 ? (
+              <p className="sf-muted">No notifications yet.</p>
+            ) : (
+              history.map((h) => (
+                <div key={h.id} className="sf-notif-item">
+                  <Tag type={tagFor(h.kind) as any}>{h.title}</Tag>
+                  <div>
+                    <div>{h.subtitle}</div>
+                    <div className="sf-muted">{new Date(h.ts).toLocaleString()}</div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
       <Content className={navOpen ? "sf-nav-open" : undefined}>
         <Routes>
           <Route path="/" element={<Dashboard />} />

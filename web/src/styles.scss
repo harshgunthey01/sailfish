@@ -93,3 +93,60 @@ body {
   gap: 0.5rem;
   max-width: min(22rem, calc(100vw - 2rem));
 }
+
+// Notification center: megaphone badge + popup repository.
+.sf-bell-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.sf-bell-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.2rem;
+  border-radius: 0.5rem;
+  background: var(--cds-support-error, #da1e28);
+  color: #fff;
+  font-size: 0.65rem;
+  line-height: 1rem;
+  text-align: center;
+}
+
+.sf-notif-panel {
+  position: fixed;
+  top: 3.25rem;
+  right: 0.5rem;
+  z-index: 9998;
+  width: min(24rem, calc(100vw - 1rem));
+  max-height: min(60vh, 30rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--cds-layer-01);
+  border: 1px solid var(--cds-border-subtle);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.sf-notif-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--cds-border-subtle);
+}
+
+.sf-notif-list {
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.sf-notif-item {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
