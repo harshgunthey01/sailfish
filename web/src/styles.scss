@@ -71,6 +71,13 @@ body {
   font-size: 0.85rem;
 }
 
+// Light mode: 70%-opacity body text looks washed out on the gray-10 page.
+// Use the proper secondary-text token at full opacity instead.
+.cds--g10 .sf-muted {
+  opacity: 1;
+  color: var(--cds-text-secondary);
+}
+
 .sf-error-modal code {
   white-space: pre-wrap;
 }

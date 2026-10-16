@@ -9,6 +9,7 @@ import {
 } from "@carbon/react";
 import { AreaChart, DonutChart } from "@carbon/charts-react";
 import { api } from "../api";
+import { useAppTheme } from "../theme";
 
 interface BillingSummary {
   state: {
@@ -27,6 +28,11 @@ interface BillingSummary {
 }
 
 export default function Dashboard() {
+  const { dark } = useAppTheme();
+  // Carbon charts bake their palette at construction and never re-theme live,
+  // so pass the active theme AND remount on toggle (key) to keep colors,
+  // gridlines, and tooltips matched to the page in both modes.
+  const chartTheme = dark ? "g100" : "g10";
   const [billing, setBilling] = useState<BillingSummary | null>(null);
   const [series, setSeries] = useState<any[]>([]);
   const [byModel, setByModel] = useState<any[]>([]);
@@ -160,8 +166,10 @@ export default function Dashboard() {
         <h5 style={{ margin: "1rem 0 0.5rem" }}>Token burn rate (7 days)</h5>
         {areaData.length > 0 ? (
           <AreaChart
+            key={`area-${chartTheme}`}
             data={areaData}
             options={{
+              theme: chartTheme,
               axes: {
                 left: { mapsTo: "value" },
                 bottom: { scaleType: "time", mapsTo: "date" },
@@ -182,8 +190,9 @@ export default function Dashboard() {
         <h5 style={{ margin: "1rem 0 0.5rem" }}>Cost distribution by model (7 days)</h5>
         {donutData.length > 0 ? (
           <DonutChart
+            key={`donut-${chartTheme}`}
             data={donutData}
-            options={{ height: "260px" } as any}
+            options={{ theme: chartTheme, height: "260px" } as any}
           />
         ) : (
           <p className="sf-muted">No spend recorded yet.</p>
