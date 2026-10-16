@@ -39,6 +39,13 @@ export default function InfrastructurePage() {
   const { dark } = useAppTheme();
   const chartTheme = dark ? "g100" : "g10";
   const [droplets, setDroplets] = useState<Droplet[]>([]);
+  const [invDatabases, setInvDatabases] = useState<any[]>([]);
+  const [inv, setInv] = useState<Record<string, any[]>>({});
+  const [waste, setWaste] = useState<{
+    detached_volumes: any[];
+    old_snapshots: any[];
+    unattached_ips: any[];
+  } | null>(null);
   const [regions, setRegions] = useState<RegionSpend[]>([]);
   const [totals, setTotals] = useState({ attributed: 0, unattributed: 0, total: 0, mtd: 0 });
   const [error, setError] = useState<string | null>(null);
@@ -121,6 +128,40 @@ export default function InfrastructurePage() {
         setError(e?.body?.error ?? e?.message ?? "Failed to load infrastructure")
       )
       .finally(() => setLoading(false));
+    api
+      .get<{
+        databases: any[];
+        microvms: any[];
+        kubernetes: any[];
+        apps: any[];
+        volumes: any[];
+        snapshots: any[];
+        load_balancers: any[];
+        reserved_ips: any[];
+        functions: any[];
+        cdn: any[];
+        domains: any[];
+        agents: any[];
+        waste: { detached_volumes: any[]; old_snapshots: any[]; unattached_ips: any[] };
+      }>("/infrastructure/inventory")
+      .then((r) => {
+        setInvDatabases(r.databases);
+        setInv({
+          microvms: r.microvms,
+          kubernetes: r.kubernetes,
+          apps: r.apps,
+          volumes: r.volumes,
+          snapshots: r.snapshots,
+          load_balancers: r.load_balancers,
+          reserved_ips: r.reserved_ips,
+          functions: r.functions,
+          cdn: r.cdn,
+          domains: r.domains,
+          agents: r.agents,
+        });
+        setWaste(r.waste);
+      })
+      .catch(() => {});
   }, []);
 
   return (
@@ -187,6 +228,80 @@ export default function InfrastructurePage() {
       </Column>
 
       <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>
+          Databases <Tag type={invDatabases.length ? "blue" : "cool-gray"}>{invDatabases.length}</Tag>
+        </h5>
+        {invDatabases.length > 0 ? (
+          <StructuredListWrapper>
+            <StructuredListHead>
+              <StructuredListRow head>
+                <StructuredListCell head>Name</StructuredListCell>
+                <StructuredListCell head>Engine</StructuredListCell>
+                <StructuredListCell head>Size</StructuredListCell>
+                <StructuredListCell head>Region</StructuredListCell>
+                <StructuredListCell head>Status</StructuredListCell>
+              </StructuredListRow>
+            </StructuredListHead>
+            <StructuredListBody>
+              {invDatabases.map((d: any) => (
+                <StructuredListRow key={d.id ?? d.name}>
+                  <StructuredListCell>{d.name}</StructuredListCell>
+                  <StructuredListCell>
+                    {d.engine}
+                    {d.version ? ` ${d.version}` : ""}
+                  </StructuredListCell>
+                  <StructuredListCell>{d.size ?? "—"}</StructuredListCell>
+                  <StructuredListCell>{d.region ?? "—"}</StructuredListCell>
+                  <StructuredListCell>
+                    <Tag type={d.status === "online" ? "green" : "gray"}>{d.status ?? "—"}</Tag>
+                  </StructuredListCell>
+                </StructuredListRow>
+              ))}
+            </StructuredListBody>
+          </StructuredListWrapper>
+        ) : (
+          !loading && <p className="sf-muted">No managed databases.</p>
+        )}
+        <p className="sf-muted" style={{ marginTop: "0.5rem" }}>
+          Note: DigitalOcean exposes usage metrics for MySQL clusters only — Postgres,
+          Redis, and Kafka clusters show inventory without metric charts.
+        </p>
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>Idle waste</h5>
+        {!waste ? (
+          <p className="sf-muted">Checking…</p>
+        ) : waste.detached_volumes.length + waste.old_snapshots.length + waste.unattached_ips.length === 0 ? (
+          <p className="sf-muted">
+            <Tag type="green">all clear</Tag> No detached volumes, no snapshots older
+            than 90 days, no unattached IPs.
+          </p>
+        ) : (
+          <>
+            {waste.detached_volumes.map((v: any) => (
+              <p key={v.id} className="sf-muted">
+                <Tag type="red">volume</Tag> {v.name} ({v.size_gb} GB, {v.region}) —
+                detached, still billed.
+              </p>
+            ))}
+            {waste.old_snapshots.map((s: any) => (
+              <p key={s.id} className="sf-muted">
+                <Tag type="red">snapshot</Tag> {s.name} ({s.resource_type},{" "}
+                {s.created_at ? new Date(s.created_at).toLocaleDateString() : "?"}) — older
+                than 90 days.
+              </p>
+            ))}
+            {waste.unattached_ips.map((r: any) => (
+              <p key={r.ip} className="sf-muted">
+                <Tag type="red">IP</Tag> {r.ip} ({r.region}) — unattached, still billed.
+              </p>
+            ))}
+          </>
+        )}
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
         <h5 style={{ margin: "1.5rem 0 0.5rem" }}>Core spend by region (month-to-date)</h5>
         {regions.length > 0 ? (
           <>
@@ -225,6 +340,54 @@ export default function InfrastructurePage() {
         ) : (
           !loading && <p className="sf-muted">No core-compute spend this month.</p>
         )}
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>Other products</h5>
+        {[
+          { key: "microvms", label: "MicroVMs", detail: (x: any) => `${x.status ?? ""} ${x.region ?? ""}`.trim() },
+          { key: "kubernetes", label: "Kubernetes", detail: (x: any) => `${x.status ?? ""} · ${x.size ?? ""}`.trim() },
+          { key: "apps", label: "App Platform", detail: (x: any) => x.status ?? "" },
+          { key: "volumes", label: "Volumes", detail: (x: any) => `${x.size_gb ?? "?"} GB · ${(x.attached_to ?? []).length ? "attached" : "detached"}` },
+          { key: "snapshots", label: "Snapshots", detail: (x: any) => `${x.resource_type ?? ""}`.trim() },
+          { key: "load_balancers", label: "Load balancers", detail: (x: any) => `${x.status ?? ""} ${x.region ?? ""}`.trim() },
+          { key: "reserved_ips", label: "Reserved IPs", detail: (x: any) => (x.attached_to ? `→ ${x.attached_to}` : "unattached") },
+          { key: "functions", label: "Functions", detail: (x: any) => x.region ?? "" },
+          { key: "cdn", label: "CDN endpoints", detail: (x: any) => x.status ?? "" },
+          { key: "domains", label: "Domains", detail: () => "" },
+          {
+            key: "agents",
+            label: "GenAI agents",
+            detail: (x: any) => (x.usage ? "usage tracked" : "no usage data"),
+          },
+        ].map((p) => {
+          const items = inv[p.key] ?? [];
+          if (!items.length) return null;
+          return (
+            <div key={p.key} style={{ marginBottom: "0.75rem" }}>
+              <strong>{p.label}</strong>{" "}
+              <Tag type="blue">{items.length}</Tag>
+              {items.slice(0, 20).map((x: any) => (
+                <div key={x.id ?? x.ip ?? x.name} className="sf-muted">
+                  {x.name ?? x.ip}
+                  {p.detail(x) ? ` — ${p.detail(x)}` : ""}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+        {!loading &&
+          ["microvms", "kubernetes", "apps", "volumes", "snapshots", "load_balancers", "reserved_ips", "functions", "cdn", "domains", "agents"].every(
+            (k) => (inv[k] ?? []).length === 0
+          ) && (
+            <p className="sf-muted">
+              Nothing else on this account. Spaces has no bucket-inventory API —
+              its usage appears as billing lines only.
+            </p>
+          )}
+        <p className="sf-muted" style={{ marginTop: "0.5rem" }}>
+          Spaces has no bucket-inventory endpoint; its spend shows under billing only.
+        </p>
       </Column>
 
       <Column sm={4} md={8} lg={16}>

@@ -117,6 +117,59 @@ export interface Droplet {
   tags?: string[];
 }
 
+/** Generic named resource row for inventory tables. */
+export interface NamedResource {
+  id: string | number;
+  name: string;
+  status?: string;
+  region?: string;
+  size?: string;
+  created_at?: string;
+}
+
+export interface Database {
+  id: string;
+  name: string;
+  engine?: string;
+  version?: string;
+  size?: string;
+  region?: string;
+  status?: string;
+  created_at?: string;
+}
+
+export interface Volume {
+  id: string;
+  name: string;
+  size_gb?: number;
+  region?: string;
+  attached_to: string[];
+  created_at?: string;
+}
+
+export interface Snapshot {
+  id: string;
+  name: string;
+  resource_type?: string;
+  size_gb?: number;
+  regions?: string[];
+  created_at?: string;
+}
+
+export interface ReservedIp {
+  ip: string;
+  region?: string;
+  attached_to: string | null;
+}
+
+export interface Agent {
+  uuid: string;
+  name: string;
+  status?: string;
+  created_at?: string;
+  usage?: any;
+}
+
 /** One entry from GET /v2/customers/my/billing_history (payments, invoices...). */
 export interface BillingHistoryEntry {
   description: string;
@@ -375,6 +428,175 @@ export class DOClient {
       `/v2/monitoring/metrics/droplet/${metric}?${q}`
     );
     return expect(status, json, text);
+  }
+
+  // ---- core inventory: other billable products (read-only) ----
+  private async fetchAll(key: string, base: string): Promise<any[]> {
+    const out: any[] = [];
+    let page = 1;
+    for (;;) {
+      const { status, json, text } = await req(
+        CTRL,
+        this.ctrlToken,
+        "GET",
+        `${base}?per_page=200&page=${page}`
+      );
+      if (status === 404) return out;
+      const j = expect(status, json, text);
+      const arr = j[key] ?? [];
+      out.push(...arr);
+      const pages = j.meta?.total ?? 1;
+      if (page >= pages || arr.length === 0) break;
+      if (++page > 50) break;
+    }
+    return out;
+  }
+
+  async listDatabases(): Promise<Database[]> {
+    const rows = await this.fetchAll("databases", "/v2/databases");
+    return rows.map((d: any) => ({
+      id: d.id ?? d.name,
+      name: d.name,
+      engine: d.engine,
+      version: d.version,
+      size: d.size,
+      region: d.region,
+      status: d.status,
+      created_at: d.created_at,
+    }));
+  }
+
+  async listMicrovms(): Promise<NamedResource[]> {
+    const rows = await this.fetchAll("microvms", "/v2/microvms");
+    return rows.map((m: any) => ({
+      id: m.id,
+      name: m.name ?? m.id,
+      status: m.status,
+      region: m.region?.slug ?? m.region,
+      size: m.size,
+      created_at: m.created_at,
+    }));
+  }
+
+  async listK8sClusters(): Promise<NamedResource[]> {
+    const rows = await this.fetchAll("kubernetes_clusters", "/v2/kubernetes/clusters");
+    return rows.map((k: any) => ({
+      id: k.id,
+      name: k.name,
+      status: k.status?.state ?? k.status,
+      region: k.region,
+      size: `${k.node_pools?.reduce((n: number, p: any) => n + (p.count ?? 0), 0) ?? 0} nodes`,
+      created_at: k.created_at,
+    }));
+  }
+
+  async listApps(): Promise<NamedResource[]> {
+    const rows = await this.fetchAll("apps", "/v2/apps");
+    return rows.map((a: any) => ({
+      id: a.id,
+      name: a.spec?.name ?? a.id,
+      status: a.active_deployment ? "active" : "inactive",
+      region: a.region?.slug ?? a.region,
+      created_at: a.created_at,
+    }));
+  }
+
+  async listVolumes(): Promise<Volume[]> {
+    const rows = await this.fetchAll("volumes", "/v2/volumes");
+    return rows.map((v: any) => ({
+      id: v.id,
+      name: v.name,
+      size_gb: v.size_gigabytes,
+      region: v.region?.slug ?? v.region,
+      attached_to: (v.droplet_ids ?? []).map(String),
+      created_at: v.created_at,
+    }));
+  }
+
+  async listSnapshots(): Promise<Snapshot[]> {
+    const rows = await this.fetchAll("snapshots", "/v2/snapshots");
+    return rows.map((s: any) => ({
+      id: s.id,
+      name: s.name,
+      resource_type: s.resource_type,
+      size_gb: s.size,
+      regions: s.regions ?? [],
+      created_at: s.created_at,
+    }));
+  }
+
+  async listLoadBalancers(): Promise<NamedResource[]> {
+    const rows = await this.fetchAll("load_balancers", "/v2/load_balancers");
+    return rows.map((l: any) => ({
+      id: l.id,
+      name: l.name,
+      status: l.status,
+      region: l.region?.slug ?? l.region,
+      size: l.size_unit ? `${l.size_unit} unit(s)` : undefined,
+      created_at: l.created_at,
+    }));
+  }
+
+  async listReservedIps(): Promise<ReservedIp[]> {
+    const rows = await this.fetchAll("reserved_ips", "/v2/reserved_ips");
+    return rows.map((r: any) => ({
+      ip: r.ip,
+      region: r.region?.slug ?? r.region,
+      attached_to: r.droplet ? String(r.droplet.id ?? r.droplet.name ?? "") : null,
+    }));
+  }
+
+  async listFunctionNamespaces(): Promise<NamedResource[]> {
+    const rows = await this.fetchAll("namespaces", "/v2/functions/namespaces");
+    return rows.map((n: any) => ({
+      id: n.id ?? n.namespace,
+      name: n.label ?? n.namespace ?? n.id,
+      region: n.region,
+      created_at: n.created_at,
+    }));
+  }
+
+  async listCdnEndpoints(): Promise<NamedResource[]> {
+    const rows = await this.fetchAll("endpoints", "/v2/cdn/endpoints");
+    return rows.map((e: any) => ({
+      id: e.id,
+      name: e.origin,
+      status: e.status,
+      created_at: e.created_at,
+    }));
+  }
+
+  async listDomains(): Promise<NamedResource[]> {
+    const rows = await this.fetchAll("domains", "/v2/domains");
+    return rows.map((d: any) => ({ id: d.name, name: d.name }));
+  }
+
+  async listAgents(): Promise<Agent[]> {
+    const rows = await this.fetchAll("agents", "/v2/gen-ai/agents");
+    return Promise.all(
+      rows.map(async (a: any) => {
+        const uuid = a.uuid ?? a.id;
+        let usage: any = null;
+        try {
+          const { status, json } = await req(
+            CTRL,
+            this.ctrlToken,
+            "GET",
+            `/v2/gen-ai/agents/${encodeURIComponent(uuid)}/usage`
+          );
+          if (status < 400) usage = json;
+        } catch {
+          /* usage is best-effort */
+        }
+        return {
+          uuid,
+          name: a.name ?? uuid,
+          status: a.status,
+          created_at: a.created_at,
+          usage,
+        };
+      })
+    );
   }
 
   // ---- inference plane ----

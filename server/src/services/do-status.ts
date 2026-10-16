@@ -22,8 +22,10 @@ export async function pollDoStatus(): Promise<{ ok: boolean; unresolved: number;
     if (!res.ok) return { ok: false, unresolved: -1, detail: `status ${res.status}` };
     const j = (await res.json()) as any;
     const incidents = (j.incidents ?? []) as any[];
+    const seen: string[] = [];
     for (const i of incidents) {
       if (!i?.id) continue;
+      seen.push(String(i.id));
       const resolved = i.status === "resolved" ? 1 : 0;
       db.prepare(
         `INSERT INTO do_incidents (id, name, status, shortlink, updated_at, resolved)
@@ -41,6 +43,14 @@ export async function pollDoStatus(): Promise<{ ok: boolean; unresolved: number;
       );
     }
     db.prepare(`DELETE FROM do_incidents WHERE resolved = 1 AND updated_at < datetime('now', '-7 days')`).run();
+    // Incidents that vanished from the feed are over: without this, a
+    // resolved incident would stay on the banner forever.
+    if (seen.length > 0) {
+      const placeholders = seen.map(() => "?").join(",");
+      db.prepare(`UPDATE do_incidents SET resolved = 1 WHERE resolved = 0 AND id NOT IN (${placeholders})`).run(...seen);
+    } else {
+      db.prepare(`UPDATE do_incidents SET resolved = 1 WHERE resolved = 0`).run();
+    }
     const n = (db.prepare("SELECT COUNT(*) AS n FROM do_incidents WHERE resolved = 0").get() as any).n;
     return { ok: true, unresolved: n, detail: `${incidents.length} incident(s) in feed` };
   } catch (e) {

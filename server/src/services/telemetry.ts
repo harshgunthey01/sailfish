@@ -128,8 +128,14 @@ export function costByModel(days = 7) {
 
 export function pruneTelemetry() {
   const db = getDb();
-  db.prepare(`DELETE FROM telemetry_logs WHERE timestamp < datetime('now', '-30 days')`).run();
-  db.prepare(`DELETE FROM telemetry_hourly WHERE hour_ts < datetime('now', '-365 days')`).run();
+  // NOTE: timestamp columns written as JS ISO strings ("...T...Z") must be
+  // compared against ISO cutoffs — SQLite datetime('now') yields a
+  // space-separated format that never compares correctly against them.
+  const isoCutoff = (days: number) => new Date(Date.now() - days * 86400_000).toISOString();
+  db.prepare(`DELETE FROM telemetry_logs WHERE timestamp < ?`).run(isoCutoff(30));
+  db.prepare(`DELETE FROM telemetry_hourly WHERE hour_ts < ?`).run(isoCutoff(365));
+  db.prepare(`DELETE FROM billing_history WHERE ts < ?`).run(isoCutoff(90));
+  db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(isoCutoff(0));
   db.prepare(`DELETE FROM notification_log WHERE ts < datetime('now', '-90 days')`).run();
   db.prepare(`DELETE FROM jobs WHERE created_at < datetime('now', '-30 days')`).run();
   db.prepare(`DELETE FROM sync_log WHERE ts < datetime('now', '-30 days')`).run();
