@@ -63,7 +63,8 @@ export default function Dashboard() {
     () =>
       (byModel as any[]).map((r: any) => ({
         group: r.model_id,
-        value: Math.round((r.cost ?? 0) * 10000) / 10000,
+        // 6-decimal precision: real sub-cent costs (e.g. $0.000033) must not round to 0
+        value: Math.round((r.cost ?? 0) * 1e6) / 1e6,
       })),
     [byModel]
   );

@@ -12,6 +12,7 @@ interface PriceRow {
 }
 
 // Curated defaults (USD per 1M tokens); overridable later via UI.
+// AI-model rows below come from real DO billing-insights "@ $X/thousand" rates (Oct 2026).
 export const PRICING: Record<string, PriceRow> = {
   "llama-3.3-70b-instruct": { input: 0.9, output: 0.9 },
   "llama3.3-70b-instruct": { input: 0.9, output: 0.9 },
@@ -20,11 +21,16 @@ export const PRICING: Record<string, PriceRow> = {
   "llama-3.2-3b-instruct": { input: 0.05, output: 0.05 },
   "qwen3-32b": { input: 0.5, output: 0.5 },
   "qwen3-235b-a22b": { input: 1.0, output: 1.0 },
-  "openai-gpt-oss-120b": { input: 0.4, output: 0.4 },
+  "qwen3.8-max": { input: 2.0, output: 6.0 },
+  "openai-gpt-oss-120b": { input: 0.1, output: 0.7 },
   "openai-gpt-oss-20b": { input: 0.1, output: 0.1 },
   "mistral-large-latest": { input: 2.0, output: 6.0 },
   "gemini-2.5-flash": { input: 0.3, output: 2.5 },
   "deepseek-v3.2": { input: 0.6, output: 1.7 },
+  "deepseek-4-flash": { input: 0.14, output: 0.28 },
+  "deepseek-v4.1-flash": { input: 0.3, output: 1.2 },
+  "glm-5.3-flash": { input: 0.15, output: 0.5 },
+  "glm-5.3": { input: 1.4, output: 4.4 },
 };
 
 export const FALLBACK_PRICE: PriceRow = { input: 0.5, output: 0.5 };
