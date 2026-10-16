@@ -279,7 +279,7 @@ CREATE TABLE budgets (
   name TEXT NOT NULL,                       -- e.g. "AI inference — Oct"
   scope TEXT NOT NULL CHECK (scope IN ('ai','core','total')),
   amount_usd REAL NOT NULL CHECK (amount_usd > 0),
-  alerts_json TEXT NOT NULL DEFAULT '[50,80,100]',  -- pct levels, ascending
+  alerts_json TEXT NOT NULL,                -- customer-defined pct levels, ascending
   channels_json TEXT NOT NULL DEFAULT '["smtp"]',
   fired_json TEXT NOT NULL DEFAULT '[]',    -- levels already fired this month
   fired_month TEXT NOT NULL DEFAULT '',     -- 'YYYY-MM' the fired list belongs to
@@ -287,6 +287,11 @@ CREATE TABLE budgets (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
+
+Alert levels are fully customer-defined (the form suggests 50/80/100 as a
+starting point but stores whatever ascending 1–100 list the customer enters).
+`PUT /budgets/:id` allows editing amount, alerts, channels, and active flag
+after creation — budgets are living objects, not fire-and-forget.
 
 ### Spend basis (locked)
 
@@ -312,13 +317,18 @@ CREATE TABLE budgets (
   (rate × days-left, reusing the forecast math) and `on_pace` flag
   (`projected > amount`).
 - `POST /budgets {name, scope, amount_usd, alerts?, channels?}` (validate:
-  amount > 0, scope known, alerts ascending 1–100).
+  amount > 0, scope known, alerts ascending 1–100; alerts default to
+  [50,80,100] only as a suggestion when the customer leaves them blank).
+- `PUT /budgets/:id {amount_usd?, alerts?, channels?, is_active?}` (same
+  validation; changing alerts mid-month does not refire already-fired levels).
 - `DELETE /budgets/:id`.
 
 ### UI
 
-- Settings "Monthly budgets" section: create form + list with per-budget
-  progress bar (`ProgressBar`), pace note ("on pace to exceed by $X" from
+- Settings "Monthly budgets" section: create form (name, scope, amount,
+  comma-separated alert levels prefilled with 50,80,100), per-budget edit of
+  amount/levels/channels, active toggle, and list with per-budget progress
+  bars (`ProgressBar`), pace note ("on pace to exceed by $X" from
   `projected_eom_usd`), delete.
 - Dashboard: one compact budget bar under the forecast strip for the first
   active budget (or the worst pace), linking to Settings.
@@ -331,7 +341,7 @@ CREATE TABLE budgets (
 
 ---
 
-## Phase 7 — Weekly digest email (specified, not built)
+## Phase 7 — Digest email, customer-chosen cadence (specified, not built)
 
 **Why:** cadence beats dashboards — the numbers should reach the inbox
 without opening the app. All content already exists as endpoints/functions.
@@ -351,8 +361,14 @@ Plaintext first (reliable everywhere); HTML is a later enhancement, not v1.
 
 ### Delivery
 
-- Sundays 08:00 UTC: reuse `scheduleDaily` with a weekday guard (no
-  scheduler changes). Recipient = admin email from `admins`.
+- Customer-chosen cadence: **daily / weekly / biweekly / every 2 months**
+  (labeled unambiguously in the UI — "bimonthly" is avoided because it means
+  two different things to different people). Weekly and longer cadences run
+  on a rolling basis from when the customer enables them, not a fixed weekday.
+- Implemented as a daily tick with a persisted `next_due` date (survives
+  restarts, unlike weekday guards): each run sends if `today >= next_due`,
+  then advances `next_due` by the interval.
+- Recipient = admin email from `admins`; plaintext v1.
 - Requires SMTP: without it, skip + `logNotification("smtp", "digest",
   "skipped", "smtp not configured")`. Never throw from the scheduled job.
 - `POST /notifications/digest/test` sends immediately (for the Settings
@@ -360,10 +376,12 @@ Plaintext first (reliable everywhere); HTML is a later enhancement, not v1.
 
 ### Settings UI + API
 
-- "Weekly digest" section: enable `Checkbox`, test-send button.
-- `GET /notifications/digest` → `{ enabled }`;
-  `POST /notifications/digest { enabled }` (persisted in
-  `app_extras.settings_json` under `digest`, alongside SMTP settings).
+- "Digest" section: enable `Checkbox`, cadence `Dropdown` (Daily / Weekly /
+  Every 2 weeks / Every 2 months), next-due display, test-send button.
+- `GET /notifications/digest` → `{ enabled, frequency, next_due }`;
+  `POST /notifications/digest { enabled, frequency }` (persisted in
+  `app_extras.settings_json` under `digest`, alongside SMTP settings;
+  changing frequency recomputes `next_due` from today).
 - Default: disabled until explicitly enabled (no surprise email).
 
 ### Acceptance
