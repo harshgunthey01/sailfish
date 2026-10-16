@@ -27,21 +27,24 @@ export function modelRouterRoutes(vault: Vault): Hono {
     const tok = vault.get("do_token");
     if (!tok) {
       c.status(400);
-      c.header("content-type", "application/json");
-      c.body(
-        JSON.stringify({
-          error: "DigitalOcean token not configured. Add it in Settings.",
-          code: "no_creds",
-        })
-      );
       return undefined;
     }
     return new DOClient(tok, "");
   }
 
+  function noCreds(c: any) {
+    return c.json(
+      {
+        error: "DigitalOcean token not configured. Add it in Settings.",
+        code: "no_creds",
+      },
+      400
+    );
+  }
+
   app.get("/", async (c) => {
     const client = clientOrError(c);
-    if (!client) return;
+    if (!client) return noCreds(c);
     try {
       const routers = await client.listModelRouters();
       return c.json({ routers, source: "live" });
@@ -53,7 +56,7 @@ export function modelRouterRoutes(vault: Vault): Hono {
 
   app.post("/", async (c) => {
     const client = clientOrError(c);
-    if (!client) return;
+    if (!client) return noCreds(c);
     const body = await c.req.json<Record<string, unknown>>();
     const parsed = normalizeInput(body);
     if ("error" in parsed) return c.json({ error: parsed.error }, 400);
@@ -67,7 +70,7 @@ export function modelRouterRoutes(vault: Vault): Hono {
 
   app.get("/:uuid", async (c) => {
     const client = clientOrError(c);
-    if (!client) return;
+    if (!client) return noCreds(c);
     try {
       const router = await client.getModelRouter(c.req.param("uuid"));
       return c.json({ router });
@@ -78,7 +81,7 @@ export function modelRouterRoutes(vault: Vault): Hono {
 
   app.put("/:uuid", async (c) => {
     const client = clientOrError(c);
-    if (!client) return;
+    if (!client) return noCreds(c);
     const body = await c.req.json<Record<string, unknown>>();
     const parsed = normalizeInput(body);
     if ("error" in parsed) return c.json({ error: parsed.error }, 400);
@@ -92,7 +95,7 @@ export function modelRouterRoutes(vault: Vault): Hono {
 
   app.delete("/:uuid", async (c) => {
     const client = clientOrError(c);
-    if (!client) return;
+    if (!client) return noCreds(c);
     try {
       await client.deleteModelRouter(c.req.param("uuid"));
       return c.json({ ok: true });

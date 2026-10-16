@@ -99,15 +99,51 @@ export default function SettingsPage() {
   const [backups, setBackups] = useState<Array<{ file: string; bytes: number; created_at: string }>>([]);
   const [pendingRestore, setPendingRestore] = useState<string | null>(null);
 
+  // ---- backup schedule + S3 ----
+  const [schedEnabled, setSchedEnabled] = useState(true);
+  const [schedFreq, setSchedFreq] = useState("daily");
+  const [schedHour, setSchedHour] = useState(3);
+  const [s3Endpoint, setS3Endpoint] = useState("");
+  const [s3Bucket, setS3Bucket] = useState("");
+  const [s3Region, setS3Region] = useState("us-east-1");
+  const [s3Prefix, setS3Prefix] = useState("sailfish/");
+  const [s3PathStyle, setS3PathStyle] = useState(false);
+  const [s3Access, setS3Access] = useState("");
+  const [s3Secret, setS3Secret] = useState("");
+  const [s3HasKeys, setS3HasKeys] = useState(false);
+  const [s3Objects, setS3Objects] = useState<Array<{ key: string; bytes: number; modified: string }>>([]);
+  const [s3Status, setS3Status] = useState<string | null>(null);
+
   const loadBackups = () =>
-    api
-      .get<{
+    Promise.all([
+      api.get<{
         backups: Array<{ file: string; bytes: number; created_at: string }>;
         pending: string | null;
-      }>("/backups")
-      .then((r) => {
-        setBackups(r.backups);
-        setPendingRestore(r.pending);
+      }>("/backups"),
+      api.get<{
+        schedule: { enabled: boolean; frequency: string; hour_utc: number };
+        s3: {
+          endpoint: string;
+          bucket: string;
+          region: string;
+          prefix: string;
+          path_style: boolean;
+          has_keys: boolean;
+        };
+      }>("/backups/config"),
+    ])
+      .then(([b, c]) => {
+        setBackups(b.backups);
+        setPendingRestore(b.pending);
+        setSchedEnabled(c.schedule.enabled);
+        setSchedFreq(c.schedule.frequency);
+        setSchedHour(c.schedule.hour_utc);
+        setS3Endpoint(c.s3.endpoint);
+        setS3Bucket(c.s3.bucket);
+        setS3Region(c.s3.region);
+        setS3Prefix(c.s3.prefix);
+        setS3PathStyle(c.s3.path_style);
+        setS3HasKeys(c.s3.has_keys);
       })
       .catch(() => {});
 
@@ -616,9 +652,9 @@ export default function SettingsPage() {
       <Column sm={4} md={8} lg={16}>
         <h5 style={{ margin: "1.5rem 0 0.5rem" }}>Backups</h5>
         <p className="sf-muted" style={{ marginBottom: "1rem" }}>
-          Automatic daily backup (03:00) plus one at boot when stale — newest 7 kept.
-          Restoring stages the file and needs an app restart to take effect; a safety
-          snapshot is taken first.
+          Automatic snapshots on your schedule — newest 7 kept locally, plus S3
+          off-host copies when configured. Restoring stages the file and needs an
+          app restart to take effect; a safety snapshot is taken first.
         </p>
         {pendingRestore && (
           <InlineNotification
@@ -629,6 +665,46 @@ export default function SettingsPage() {
             style={{ marginBottom: "0.75rem" }}
           />
         )}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end", marginBottom: "0.75rem" }}>
+          <Checkbox
+            id="sched-enabled"
+            labelText="Scheduled backups"
+            checked={schedEnabled}
+            onChange={(v: any) => setSchedEnabled(typeof v === "boolean" ? v : v.target.checked)}
+          />
+          <Dropdown
+            id="sched-freq"
+            titleText="Frequency"
+            label="frequency"
+            items={["daily", "weekly"]}
+            selectedItem={schedFreq}
+            onChange={({ selectedItem }: any) => setSchedFreq(selectedItem)}
+          />
+          <NumberInput
+            id="sched-hour"
+            label="Hour (UTC)"
+            min={0}
+            max={23}
+            value={schedHour}
+            onChange={(e: any) => setSchedHour(Number(e.target.value))}
+          />
+          <Button
+            kind="secondary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                await api.post("/backups/config", {
+                  enabled: schedEnabled,
+                  frequency: schedFreq,
+                  hour_utc: schedHour,
+                });
+                setNotice({ kind: "success", text: "Backup schedule saved." });
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Save schedule"}
+          </Button>
+        </div>
         <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
           <Button
             kind="primary"
@@ -729,6 +805,126 @@ export default function SettingsPage() {
           </StructuredListBody>
         </StructuredListWrapper>
         {backups.length === 0 && <p className="sf-muted">No backups yet.</p>}
+
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>S3 off-host copies</h5>
+        <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+          Works with DO Spaces, AWS S3, R2, MinIO, Wasabi. Keys stay in the vault
+          (blank = keep current{s3HasKeys ? " — keys stored" : ""}).
+          {s3Status ? ` Last check: ${s3Status}.` : ""}
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}>
+          <TextInput id="s3-endpoint" labelText="Endpoint (https://…)" value={s3Endpoint}
+            onChange={(e: any) => setS3Endpoint(e.target.value)} />
+          <TextInput id="s3-bucket" labelText="Bucket" value={s3Bucket}
+            onChange={(e: any) => setS3Bucket(e.target.value)} />
+          <TextInput id="s3-region" labelText="Region" value={s3Region}
+            onChange={(e: any) => setS3Region(e.target.value)} />
+          <TextInput id="s3-prefix" labelText="Prefix" value={s3Prefix}
+            onChange={(e: any) => setS3Prefix(e.target.value)} />
+          <TextInput id="s3-access" labelText="Access key" value={s3Access}
+            onChange={(e: any) => setS3Access(e.target.value)} />
+          <PasswordInput id="s3-secret" labelText="Secret key (blank = keep)"
+            value={s3Secret} onChange={(e: any) => setS3Secret(e.target.value)} />
+          <Checkbox id="s3-pathstyle" labelText="Path-style (MinIO)" checked={s3PathStyle}
+            onChange={(v: any) => setS3PathStyle(typeof v === "boolean" ? v : v.target.checked)} />
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
+          <Button
+            kind="secondary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                await api.post("/backups/config", {
+                  s3: {
+                    endpoint: s3Endpoint, bucket: s3Bucket, region: s3Region,
+                    prefix: s3Prefix, path_style: s3PathStyle,
+                    ...(s3Access ? { access_key: s3Access } : {}),
+                    ...(s3Secret ? { secret_key: s3Secret } : {}),
+                  },
+                });
+                setS3Access("");
+                setS3Secret("");
+                setNotice({ kind: "success", text: "S3 settings saved." });
+                loadBackups();
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Save S3"}
+          </Button>
+          <Button
+            kind="ghost"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const r = await api.post<{ ok: boolean; detail: string }>("/backups/s3/test");
+                setS3Status(r.ok ? "reachable, write ok" : `failed: ${r.detail}`);
+                setNotice({
+                  kind: r.ok ? "success" : "error",
+                  text: r.ok ? "S3 reachable, write ok." : `S3 test failed: ${r.detail}`,
+                });
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Test S3"}
+          </Button>
+          <Button
+            kind="ghost"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const r = await api.get<{ objects: Array<{ key: string; bytes: number; modified: string }> }>(
+                  "/backups/s3"
+                );
+                setS3Objects(r.objects);
+                if (!r.objects.length)
+                  setNotice({ kind: "success", text: "Connected — no objects under that prefix." });
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "List S3 objects"}
+          </Button>
+        </div>
+        {s3Objects.length > 0 && (
+          <StructuredListWrapper>
+            <StructuredListHead>
+              <StructuredListRow head>
+                <StructuredListCell head>Object</StructuredListCell>
+                <StructuredListCell head>Size</StructuredListCell>
+                <StructuredListCell head>Actions</StructuredListCell>
+              </StructuredListRow>
+            </StructuredListHead>
+            <StructuredListBody>
+              {s3Objects.map((o) => (
+                <StructuredListRow key={o.key}>
+                  <StructuredListCell>{o.key}</StructuredListCell>
+                  <StructuredListCell>{(o.bytes / 1024).toFixed(1)} KB</StructuredListCell>
+                  <StructuredListCell>
+                    <Button
+                      size="sm"
+                      kind="secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          const r = await api.post<{ ok: boolean; file: string }>(
+                            "/backups/s3/fetch",
+                            { key: o.key }
+                          );
+                          setNotice({
+                            kind: "success",
+                            text: `Fetched as ${r.file} — restore it from the list above.`,
+                          });
+                          loadBackups();
+                        })
+                      }
+                    >
+                      Fetch to local
+                    </Button>
+                  </StructuredListCell>
+                </StructuredListRow>
+              ))}
+            </StructuredListBody>
+          </StructuredListWrapper>
+        )}
       </Column>
 
       <Column sm={4} md={8} lg={16}>

@@ -16,7 +16,8 @@ import { backupRoutes } from "./api/routes/backups.js";
 import { infrastructureRoutes } from "./api/routes/infrastructure.js";
 import { notificationRoutes } from "./api/routes/notifications.js";
 import { scheduleEvery, scheduleDaily } from "./services/scheduler.js";
-import { applyPendingRestore, createBackup, listBackups } from "./services/backup.js";
+import { applyPendingRestore, createBackup, backupDue } from "./services/backup.js";
+import { uploadIfConfigured } from "./services/s3.js";
 import { checkDigestDue } from "./services/digest.js";
 import { syncBilling } from "./services/billing-sync.js";
 import { notifyBreaches } from "./services/thresholds.js";
@@ -49,7 +50,7 @@ async function main() {
   });
 
   // ---- setup wizard (has its own internal gating) ----
-  app.route("/api/v1/setup", setupRoutes(vault));
+  app.route("/api/v1/setup", setupRoutes(vault, DATA_DIR));
 
   // ---- telemetry ingest is keyed, not cookie-authed ----
   app.route("/api/v1/telemetry", telemetryRoutes(vault));
@@ -74,7 +75,7 @@ async function main() {
   protectedApp.route("/model-routers", modelRouterRoutes(vault));
   protectedApp.route("/models", modelRoutes(vault));
   protectedApp.route("/notifications", notificationRoutes(vault));
-  protectedApp.route("/backups", backupRoutes(DATA_DIR));
+  protectedApp.route("/backups", backupRoutes(vault, DATA_DIR));
   protectedApp.route("/infrastructure", infrastructureRoutes(vault));  app.route("/api/v1", protectedApp);
 
   // ---- static SPA ----
@@ -108,25 +109,16 @@ async function main() {
     log({ task: "prune", detail: "ok" });
   });
 
-  // Daily automated backup (03:00) + one at boot if none in the last 24h.
-  const bootBackup = () => {
+  // Configurable automated backup: hourly check, backs up when the newest
+  // snapshot is older than the interval (boot is covered by the first tick).
+  // Uploads to S3 afterwards when configured.
+  scheduleEvery("backup-check", 60 * 60_000, async () => {
     try {
-      const latest = listBackups(DATA_DIR)[0];
-      const stale =
-        !latest || Date.now() - new Date(latest.created_at).getTime() > 24 * 3600_000;
-      if (stale) {
-        const b = createBackup(DATA_DIR);
-        log({ task: "backup", detail: "ok", file: b.file, when: "boot" });
-      }
-    } catch (e) {
-      log({ task: "backup", detail: e instanceof Error ? e.message : String(e) });
-    }
-  };
-  bootBackup();
-  scheduleDaily("backup", 3, () => {
-    try {
+      if (!backupDue(DATA_DIR)) return;
       const b = createBackup(DATA_DIR);
       log({ task: "backup", detail: "ok", file: b.file, when: "scheduled" });
+      const s3 = await uploadIfConfigured(vault, DATA_DIR, b.file);
+      log({ task: "backup-s3", uploaded: s3.uploaded, detail: s3.detail });
     } catch (e) {
       log({ task: "backup", detail: e instanceof Error ? e.message : String(e) });
     }

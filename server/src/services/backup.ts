@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db/schema.js";
 
 /**
@@ -52,6 +53,11 @@ export function listBackups(dataDir: string): BackupInfo[] {
 function stamp(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+}
+
+/** Fresh timestamped backup filename (matches the safe-name pattern). */
+export function backupFileName(): string {
+  return `sailfish-${stamp()}.db`;
 }
 
 export function createBackup(dataDir: string): BackupInfo {
@@ -115,4 +121,86 @@ export function applyPendingRestore(dataDir: string): string | null {
   fs.copyFileSync(src, path.join(dataDir, "sailfish.db"));
   fs.unlinkSync(path.join(dataDir, MARKER));
   return file;
+}
+
+export interface BackupSchedule {
+  enabled: boolean;
+  frequency: "daily" | "weekly";
+  hour_utc: number;
+}
+
+function readExtras(): any {
+  try {
+    const row = getDb()
+      .prepare("SELECT settings_json FROM app_extras WHERE id='singleton'")
+      .get() as any;
+    return row ? JSON.parse(row.settings_json) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function getBackupSchedule(): BackupSchedule {
+  const b = readExtras()?.backup ?? {};
+  const hour = Number(b.hour_utc);
+  return {
+    enabled: b.enabled !== false,
+    frequency: b.frequency === "weekly" ? "weekly" : "daily",
+    hour_utc: Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 3,
+  };
+}
+
+export function saveBackupSchedule(patch: Partial<BackupSchedule>): BackupSchedule {
+  const db = getDb();
+  const settings = readExtras();
+  const cur = getBackupSchedule();
+  const next: BackupSchedule = {
+    enabled: patch.enabled ?? cur.enabled,
+    frequency: patch.frequency === "weekly" ? "weekly" : patch.frequency === "daily" ? "daily" : cur.frequency,
+    hour_utc: cur.hour_utc,
+  };
+  if (patch.hour_utc !== undefined) {
+    const h = Number(patch.hour_utc);
+    if (!Number.isInteger(h) || h < 0 || h > 23) throw new Error("hour_utc must be 0-23");
+    next.hour_utc = h;
+  }
+  settings.backup = next;
+  db.prepare("UPDATE app_extras SET settings_json = ? WHERE id='singleton'").run(
+    JSON.stringify(settings)
+  );
+  return next;
+}
+
+/** Due when enabled, the newest snapshot is older than the interval, and the UTC hour has passed. */
+export function backupDue(dataDir: string): boolean {
+  const s = getBackupSchedule();
+  if (!s.enabled) return false;
+  const latest = listBackups(dataDir)[0];
+  const interval = s.frequency === "weekly" ? 7 * 86400_000 : 86400_000;
+  const stale = !latest || Date.now() - new Date(latest.created_at).getTime() >= interval;
+  return stale && new Date().getUTCHours() >= s.hour_utc;
+}
+
+/** Validate a candidate database file (magic header + integrity check). */
+export function acceptBackupFile(fullPath: string): { ok: boolean; detail: string } {
+  try {
+    const fd = fs.openSync(fullPath, "r");
+    const head = Buffer.alloc(16);
+    fs.readSync(fd, head, 0, 16, 0);
+    fs.closeSync(fd);
+    if (head.toString("binary") !== "SQLite format 3\0") {
+      return { ok: false, detail: "not a SQLite database file" };
+    }
+    const probe = new DatabaseSync(fullPath);
+    try {
+      const row = probe.prepare("PRAGMA integrity_check").get() as any;
+      const values = Object.values(row ?? {});
+      if (values[0] !== "ok") return { ok: false, detail: "integrity check failed" };
+    } finally {
+      probe.close();
+    }
+    return { ok: true, detail: "valid SQLite database" };
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
 }

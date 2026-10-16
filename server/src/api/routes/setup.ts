@@ -12,10 +12,19 @@ import {
   hashPassword,
 } from "../../auth/admin.js";
 import { sendTestEmail, sendEmail, logNotification } from "../../services/notifier.js";
+import {
+  backupDir,
+  backupFileName,
+  acceptBackupFile,
+  stageRestore,
+} from "../../services/backup.js";
+import { buildClient, listRemote, fetchRemote, saveS3Settings } from "../../services/s3.js";
+import fs from "node:fs";
+import path from "node:path";
 import type { Vault } from "../../services/vault.js";
 import { DOClient } from "../../do/client.js";
 
-export function setupRoutes(vault: Vault): Hono {
+export function setupRoutes(vault: Vault, dataDir: string): Hono {
   const app = new Hono();
 
   app.get("/status", (c) => {
@@ -129,6 +138,104 @@ export function setupRoutes(vault: Vault): Hono {
     destroySessionsForAdmin(row.admin_id);
     logNotification("smtp", "password_reset", "done", "password changed via reset link");
     return c.json({ ok: true });
+  });
+
+  // Disaster recovery during onboarding: upload a backup file or fetch one
+  // from S3, then restart to apply. Public ONLY while setup is incomplete —
+  // afterwards restores move behind the admin session (Settings → Backups).
+  function setupIncomplete(c: any): boolean {
+    const s = getDb().prepare("SELECT setup_complete FROM app_settings WHERE id='singleton'").get() as any;
+    if (s?.setup_complete) {
+      c.status(403);
+      return false;
+    }
+    return true;
+  }
+
+  const SETUP_DONE = () =>
+    ({ error: "restore is only available before setup completes; use Settings → Backups afterwards" });
+
+  app.post("/restore/upload", async (c) => {
+    if (!setupIncomplete(c)) return c.json(SETUP_DONE(), 403);
+    let file: File | undefined;
+    try {
+      const body = await c.req.parseBody();
+      const v = body["backup"];
+      if (v instanceof File) file = v;
+    } catch {
+      /* fall through to 400 */
+    }
+    if (!file) return c.json({ error: "multipart field 'backup' (.db file) required" }, 400);
+    if (file.size > 100 * 1024 * 1024) return c.json({ error: "file too large (max 100MB)" }, 413);
+    if (file.size < 100) return c.json({ error: "file is empty" }, 400);
+    const name = backupFileName();
+    const full = path.join(backupDir(dataDir), name);
+    fs.writeFileSync(full, Buffer.from(await file.arrayBuffer()));
+    const check = acceptBackupFile(full);
+    if (!check.ok) {
+      try {
+        fs.unlinkSync(full);
+      } catch {
+        /* best effort */
+      }
+      return c.json({ error: "rejected: " + check.detail }, 400);
+    }
+    const { safety } = stageRestore(dataDir, name);
+    return c.json({ ok: true, file: name, safety: safety.file, restart_required: true }, 201);
+  });
+
+  function s3Override(body: any): any {
+    const o: any = {};
+    for (const k of ["endpoint", "bucket", "region", "access_key", "secret_key", "prefix", "path_style"]) {
+      if (body?.[k] !== undefined) o[k] = body[k];
+    }
+    return o;
+  }
+
+  app.post("/restore/s3-list", async (c) => {
+    if (!setupIncomplete(c)) return c.json(SETUP_DONE(), 403);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const { client, cfg } = buildClient(body);
+      return c.json({ objects: await listRemote(client, cfg) });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+    }
+  });
+
+  app.post("/restore/s3-fetch", async (c) => {
+    if (!setupIncomplete(c)) return c.json(SETUP_DONE(), 403);
+    const body = await c.req.json().catch(() => ({}));
+    if (!body?.key) return c.json({ error: "key required" }, 400);
+    try {
+      const { cfg } = buildClient(body);
+      const r = await fetchRemote(vault, dataDir, body.key, cfg);
+      const full = path.join(backupDir(dataDir), r.file);
+      const check = acceptBackupFile(full);
+      if (!check.ok) {
+        try {
+          fs.unlinkSync(full);
+        } catch {
+          /* best effort */
+        }
+        return c.json({ error: "rejected: " + check.detail }, 400);
+      }
+      if (body.save_credentials) {
+        saveS3Settings(vault, {
+          endpoint: cfg.endpoint,
+          bucket: cfg.bucket,
+          region: cfg.region,
+          prefix: cfg.prefix,
+          path_style: cfg.path_style,
+          access_key: body.access_key,
+          secret_key: body.secret_key,
+        });
+      }
+      const { safety } = stageRestore(dataDir, r.file);
+      return c.json({ ok: true, file: r.file, safety: safety.file, restart_required: true }, 201);
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+    }
   });
 
   // auth gate for remaining setup steps

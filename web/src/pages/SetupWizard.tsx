@@ -54,6 +54,18 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
     }
   };
 
+  // disaster recovery (first boot only)
+  const [showRecover, setShowRecover] = useState(false);
+  const [recoverTab, setRecoverTab] = useState<"file" | "s3">("file");
+  const [rcEndpoint, setRcEndpoint] = useState("");
+  const [rcBucket, setRcBucket] = useState("");
+  const [rcRegion, setRcRegion] = useState("us-east-1");
+  const [rcKey, setRcKey] = useState("");
+  const [rcSecret, setRcSecret] = useState("");
+  const [rcPrefix, setRcPrefix] = useState("sailfish/");
+  const [rcObjects, setRcObjects] = useState<Array<{ key: string; bytes: number }>>([]);
+  const [rcSaveCreds, setRcSaveCreds] = useState(true);
+
   // step 2
   const [smtpHost, setSmtpHost] = useState("");  const [smtpPort, setSmtpPort] = useState(587);
   const [smtpUser, setSmtpUser] = useState("");
@@ -237,7 +249,7 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
         </div>
       )}
 
-      {step === 0 && (
+      {step === 0 && !showRecover && (
         <div>
           <p className="sf-muted" style={{ marginBottom: "1rem" }}>
             Choose the email and password <strong>you</strong> will use to sign in to
@@ -258,17 +270,151 @@ export default function SetupWizard({ needLogin, onDone }: Props) {
             onChange={(e: any) => setPassword(e.target.value)}
             style={{ marginBottom: "1rem" }}
           />
-          <Button
-            kind="primary"
-            disabled={busy}
-            onClick={() =>
-              run(async () => {
-                await api.post("/setup/admin", { email, password });
-                setStep(1);
-              })
-            }
-          >
-            {busy ? <InlineLoading /> : "Create account & continue"}
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <Button
+              kind="primary"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  await api.post("/setup/admin", { email, password });
+                  setStep(1);
+                })
+              }
+            >
+              {busy ? <InlineLoading /> : "Create account & continue"}
+            </Button>
+            <Button kind="ghost" disabled={busy} onClick={() => setShowRecover(true)}>
+              Recover from backup instead
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === 0 && showRecover && (
+        <div>
+          <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+            Restore this instance from a backup, then restart the app to apply it.
+            The uploaded file is validated before anything is staged.
+          </p>
+          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+            <Button
+              kind={recoverTab === "file" ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => setRecoverTab("file")}
+            >
+              Upload file
+            </Button>
+            <Button
+              kind={recoverTab === "s3" ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => setRecoverTab("s3")}
+            >
+              Fetch from S3
+            </Button>
+          </div>
+
+          {recoverTab === "file" && (
+            <div>
+              <input
+                id="recover-file"
+                type="file"
+                accept=".db"
+                style={{ marginBottom: "1rem" }}
+                onChange={(e: any) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const fd = new FormData();
+                  fd.append("backup", f);
+                  run(async () => {
+                    const res = await fetch("/api/v1/setup/restore/upload", {
+                      method: "POST",
+                      body: fd,
+                    });
+                    const j = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(j.error ?? `Upload failed (${res.status})`);
+                    setNotice({
+                      kind: "success",
+                      text: `Restore staged from ${j.file} (safety: ${j.safety}). Restart the app to apply, then sign in with your original credentials.`,
+                    });
+                  });
+                }}
+              />
+            </div>
+          )}
+
+          {recoverTab === "s3" && (
+            <div>
+              <TextInput id="rc-endpoint" labelText="S3 endpoint (https://…)" value={rcEndpoint}
+                onChange={(e: any) => setRcEndpoint(e.target.value)} style={{ marginBottom: "1rem" }} />
+              <TextInput id="rc-bucket" labelText="Bucket" value={rcBucket}
+                onChange={(e: any) => setRcBucket(e.target.value)} style={{ marginBottom: "1rem" }} />
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <TextInput id="rc-region" labelText="Region" value={rcRegion}
+                  onChange={(e: any) => setRcRegion(e.target.value)} style={{ marginBottom: "1rem" }} />
+                <TextInput id="rc-prefix" labelText="Prefix" value={rcPrefix}
+                  onChange={(e: any) => setRcPrefix(e.target.value)} style={{ marginBottom: "1rem" }} />
+              </div>
+              <TextInput id="rc-key" labelText="Access key" value={rcKey}
+                onChange={(e: any) => setRcKey(e.target.value)} style={{ marginBottom: "1rem" }} />
+              <PasswordInput id="rc-secret" labelText="Secret key" value={rcSecret}
+                onChange={(e: any) => setRcSecret(e.target.value)} style={{ marginBottom: "1rem" }} />
+              <Checkbox id="rc-save" labelText="Remember these S3 settings for future backups"
+                checked={rcSaveCreds} onChange={(v: any) => setRcSaveCreds(typeof v === "boolean" ? v : v.target.checked)} />
+              <div style={{ display: "flex", gap: "0.5rem", margin: "0.75rem 0" }}>
+                <Button
+                  kind="secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const r = await api.post<{ objects: Array<{ key: string; bytes: number }> }>(
+                        "/setup/restore/s3-list",
+                        {
+                          endpoint: rcEndpoint, bucket: rcBucket, region: rcRegion,
+                          access_key: rcKey, secret_key: rcSecret, prefix: rcPrefix,
+                        }
+                      );
+                      setRcObjects(r.objects);
+                      if (!r.objects.length)
+                        setNotice({ kind: "success", text: "Connected — no backup objects under that prefix." });
+                    })
+                  }
+                >
+                  {busy ? <InlineLoading /> : "List backups"}
+                </Button>
+              </div>
+              {rcObjects.map((o) => (
+                <div key={o.key} style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.5rem" }}>
+                  <span className="sf-muted" style={{ flex: 1 }}>{o.key} ({(o.bytes / 1024).toFixed(1)} KB)</span>
+                  <Button
+                    kind="primary"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() =>
+                      run(async () => {
+                        const r = await api.post<{ ok: boolean; file: string; safety: string }>(
+                          "/setup/restore/s3-fetch",
+                          {
+                            endpoint: rcEndpoint, bucket: rcBucket, region: rcRegion,
+                            access_key: rcKey, secret_key: rcSecret, prefix: rcPrefix,
+                            key: o.key, save_credentials: rcSaveCreds,
+                          }
+                        );
+                        setNotice({
+                          kind: "success",
+                          text: `Restore staged from ${r.file} (safety: ${r.safety}). Restart the app to apply, then sign in with your original credentials.`,
+                        });
+                      })
+                    }
+                  >
+                    Restore this
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Button kind="ghost" disabled={busy} onClick={() => setShowRecover(false)}>
+            Back to new setup
           </Button>
         </div>
       )}

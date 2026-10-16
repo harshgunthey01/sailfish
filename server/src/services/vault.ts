@@ -16,7 +16,7 @@ interface VaultFile {
   entries: Record<string, string>; // key -> base64(iv|tag|ciphertext)
 }
 
-const KEYS = ["do_token", "model_access_key", "smtp_password"] as const;
+const KEYS = ["do_token", "model_access_key", "smtp_password", "s3_access_key", "s3_secret_key"] as const;
 export type VaultKey = (typeof KEYS)[number];
 
 export class Vault {
