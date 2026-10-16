@@ -6,6 +6,11 @@ import {
   Button,
   InlineLoading,
   Tag,
+  StructuredListWrapper,
+  StructuredListHead,
+  StructuredListRow,
+  StructuredListCell,
+  StructuredListBody,
 } from "@carbon/react";
 import { AreaChart, DonutChart } from "@carbon/charts-react";
 import { api } from "../api";
@@ -51,6 +56,17 @@ export default function Dashboard() {
     remaining: null,
     as_of: null,
   });
+  const [cache, setCache] = useState<{
+    overall: { hit_ratio: number | null; cache_tokens: number; est_savings_usd: number };
+    by_model: Array<{
+      model_key: string;
+      cache_tokens: number;
+      input_tokens: number;
+      hit_ratio: number | null;
+      est_savings_usd: number | null;
+      rates: string;
+    }>;
+  } | null>(null);
   const [syncing, setSyncing] = useState(false);
 
   const load = () =>
@@ -70,14 +86,26 @@ export default function Dashboard() {
         days_of_credit_left: number | null;
         basis: string;
       }>("/billing/forecast"),
+      api.get<{
+        overall: { hit_ratio: number | null; cache_tokens: number; est_savings_usd: number };
+        by_model: Array<{
+          model_key: string;
+          cache_tokens: number;
+          input_tokens: number;
+          hit_ratio: number | null;
+          est_savings_usd: number | null;
+          rates: string;
+        }>;
+      }>("/billing/cache?days=30"),
     ])
-      .then(([b, s, m, d, c, f]) => {
+      .then(([b, s, m, d, c, f, ch]) => {
         setBilling(b);
         setSeries(s.series);
         setByModel(m.by_model as any[]);
         setDaily(d.days);
         setCredit(c);
         setForecast(f);
+        setCache(ch);
       })
       .catch(() => {});
 
@@ -258,6 +286,57 @@ export default function Dashboard() {
           />
         ) : (
           <p className="sf-muted">No spend recorded yet.</p>
+        )}
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1rem 0 0.5rem" }}>Cache effectiveness (30 days)</h5>
+        {cache && cache.by_model.length > 0 ? (
+          <>
+            <p style={{ marginBottom: "0.75rem" }}>
+              <span className="sf-stat-number">
+                {cache.overall.hit_ratio != null
+                  ? `${(cache.overall.hit_ratio * 100).toFixed(1)}%`
+                  : "—"}
+              </span>{" "}
+              <span className="sf-muted">
+                of input tokens served from cache · ≈ ${cache.overall.est_savings_usd.toFixed(2)} saved
+                vs full input price
+              </span>
+            </p>
+            <StructuredListWrapper>
+              <StructuredListHead>
+                <StructuredListRow head>
+                  <StructuredListCell head>Model</StructuredListCell>
+                  <StructuredListCell head>Hit %</StructuredListCell>
+                  <StructuredListCell head>Cache tokens</StructuredListCell>
+                  <StructuredListCell head>Saved</StructuredListCell>
+                </StructuredListRow>
+              </StructuredListHead>
+              <StructuredListBody>
+                {cache.by_model.map((r) => (
+                  <StructuredListRow key={r.model_key}>
+                    <StructuredListCell>{r.model_key}</StructuredListCell>
+                    <StructuredListCell>
+                      {r.hit_ratio != null ? `${(r.hit_ratio * 100).toFixed(1)}%` : (
+                        <span className="sf-muted">no cache data</span>
+                      )}
+                    </StructuredListCell>
+                    <StructuredListCell>{r.cache_tokens.toLocaleString()}</StructuredListCell>
+                    <StructuredListCell>
+                      {r.est_savings_usd != null ? (
+                        `$${r.est_savings_usd.toFixed(2)}`
+                      ) : (
+                        <span className="sf-muted">rate unknown</span>
+                      )}
+                    </StructuredListCell>
+                  </StructuredListRow>
+                ))}
+              </StructuredListBody>
+            </StructuredListWrapper>
+          </>
+        ) : (
+          <p className="sf-muted">No cache data yet.</p>
         )}
       </Column>
 

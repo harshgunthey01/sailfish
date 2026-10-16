@@ -178,6 +178,7 @@ function migrate(d: DatabaseSync) {
     model_key TEXT PRIMARY KEY,
     input_per_1m REAL NOT NULL,
     output_per_1m REAL NOT NULL,
+    cache_per_1m REAL,
     observed_at TEXT NOT NULL
   );
 
@@ -221,6 +222,7 @@ function migrate(d: DatabaseSync) {
   addColumnIfMissing(d, "telemetry_hourly", "task", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(d, "app_settings", "ai_credit_remaining", "REAL");
   addColumnIfMissing(d, "app_settings", "ai_credit_as_of", "TEXT");
+  addColumnIfMissing(d, "model_rates", "cache_per_1m", "REAL");
 
   // SQLite cannot ALTER a CHECK constraint: rebuild thresholds once to widen
   // the metric set for Phase-2 spike metrics. Existing rows are preserved.

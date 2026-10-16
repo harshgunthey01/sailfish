@@ -270,32 +270,93 @@ export function dailySummary(days = 30) {
 /** Latest observed $/1M rates per model (latest annotation wins). */
 export function upsertModelRates(db: ReturnType<typeof getDb>, points: BillingDataPoint[]) {
   const up = db.prepare(
-    `INSERT INTO model_rates (model_key, input_per_1m, output_per_1m, observed_at)
-     VALUES (?,?,?,datetime('now'))
+    `INSERT INTO model_rates (model_key, input_per_1m, output_per_1m, cache_per_1m, observed_at)
+     VALUES (?,?,?,?,datetime('now'))
      ON CONFLICT(model_key) DO UPDATE SET
        input_per_1m = COALESCE(excluded.input_per_1m, model_rates.input_per_1m),
        output_per_1m = COALESCE(excluded.output_per_1m, model_rates.output_per_1m),
+       cache_per_1m = COALESCE(excluded.cache_per_1m, model_rates.cache_per_1m),
        observed_at = excluded.observed_at`
   );
-  const seen = new Map<string, { input?: number; output?: number }>();
+  const seen = new Map<string, { input?: number; output?: number; cache?: number }>();
   for (const p of points) {
     if (bucketOf(p) !== "ai") continue;
     const key = modelKeyOf(p, "ai");
     if (key === "other-ai") continue;
     const r = ratesOf(p);
-    if (r.input === undefined && r.output === undefined) continue;
+    if (r.input === undefined && r.output === undefined && r.cache === undefined) continue;
     const cur = seen.get(key) ?? {};
     if (r.input !== undefined) cur.input = r.input;
     if (r.output !== undefined) cur.output = r.output;
+    if (r.cache !== undefined) cur.cache = r.cache;
     seen.set(key, cur);
   }
   for (const [key, r] of seen) {
-    up.run(key, r.input ?? null, r.output ?? null);
+    up.run(key, r.input ?? null, r.output ?? null, r.cache ?? null);
   }
 }
 
 export function listModelRates() {
   return getDb().prepare("SELECT * FROM model_rates ORDER BY model_key").all();
+}
+
+/** Cache effectiveness per model + overall (MONITORING.md Phase 4). */
+export function cacheSummary(days = 30) {
+  const db = getDb();
+  const d = Math.min(Math.max(days, 1), 400);
+  const rows = db
+    .prepare(
+      `SELECT model_key,
+              SUM(CASE WHEN LOWER(description) LIKE '%cache%read%' THEN prompt_tokens ELSE 0 END) AS cache_tokens,
+              SUM(CASE WHEN LOWER(description) NOT LIKE '%cache%' THEN prompt_tokens ELSE 0 END) AS input_tokens,
+              SUM(completion_tokens) AS output_tokens
+       FROM billing_daily
+       WHERE day >= date('now', ?) AND ${MODEL_BUCKETS}
+       GROUP BY model_key`
+    )
+    .all(`-${d} days`) as Array<{
+    model_key: string;
+    cache_tokens: number;
+    input_tokens: number;
+    output_tokens: number;
+  }>;
+  const rates = Object.fromEntries(
+    (listModelRates() as Array<{ model_key: string; input_per_1m: number; cache_per_1m: number | null }>).map(
+      (r) => [r.model_key, r]
+    )
+  );
+  let totalCache = 0;
+  let totalInput = 0;
+  let totalSaved = 0;
+  const by_model = rows.map((r) => {
+    const rate = rates[r.model_key];
+    const denom = r.cache_tokens + r.input_tokens;
+    const hit_ratio = denom > 0 ? round6(r.cache_tokens / denom) : null;
+    const savings =
+      rate && rate.cache_per_1m != null
+        ? round6((r.cache_tokens * (rate.input_per_1m - rate.cache_per_1m)) / 1e6)
+        : null;
+    totalCache += r.cache_tokens;
+    totalInput += r.input_tokens;
+    if (savings != null) totalSaved += savings;
+    return {
+      model_key: r.model_key,
+      cache_tokens: r.cache_tokens,
+      input_tokens: r.input_tokens,
+      hit_ratio,
+      est_savings_usd: savings,
+      rates: rate && rate.cache_per_1m != null ? "observed" : "unknown",
+    };
+  });
+  const overallDenom = totalCache + totalInput;
+  return {
+    overall: {
+      hit_ratio: overallDenom > 0 ? round6(totalCache / overallDenom) : null,
+      cache_tokens: totalCache,
+      est_savings_usd: round6(totalSaved),
+    },
+    by_model,
+  };
 }
 
 /** Today's AI-model spend + ratio vs prior-7-day mean (null ratio = no baseline). */

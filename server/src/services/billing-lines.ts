@@ -45,14 +45,22 @@ export function tokensOf(p: BillingDataPoint): { pt: number; ct: number } {
   return { pt: n, ct: 0 };
 }
 
-/** $/1M rate from "@ $P/thousand" annotations; outputs → output leg. */
-export function ratesOf(p: BillingDataPoint): { input?: number; output?: number } {
+/** $/1M rate annotations; outputs → output leg, cache reads → cache leg. */
+export function ratesOf(p: BillingDataPoint): { input?: number; output?: number; cache?: number } {
   const m = /@ \$([\d.]+)\/thousand/.exec(p.description ?? "");
   if (!m?.[1]) return {};
   const per1m = Math.round(parseFloat(m[1]) * 1000 * 1e6) / 1e6;
   if (!Number.isFinite(per1m) || per1m <= 0) return {};
   const d = (p.description ?? "").toLowerCase();
-  return d.includes("output") ? { output: per1m } : { input: per1m };
+  if (d.includes("cache") && d.includes("read")) return { cache: per1m };
+  if (d.includes("output")) return { output: per1m };
+  return { input: per1m };
+}
+
+/** True for cache lines that are NOT reads (e.g. future creation/write SKUs). */
+export function isCacheOther(p: BillingDataPoint): boolean {
+  const dd = (p.description ?? "").toLowerCase();
+  return dd.includes("cache") && !dd.includes("read");
 }
 
 export function round6(n: number): number {
