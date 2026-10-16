@@ -3,9 +3,11 @@ import {
   Grid,
   Column,
   TextInput,
+  PasswordInput,
   NumberInput,
   Button,
   InlineNotification,
+  InlineLoading,
   StructuredListWrapper,
   StructuredListHead,
   StructuredListRow,
@@ -31,6 +33,28 @@ export default function SettingsPage() {
   const [log, setLog] = useState<any[]>([]);
   const [thresholds, setThresholds] = useState<Threshold[]>([]);
   const [notice, setNotice] = useState<{ kind: "error" | "success"; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // ---- administrator ----
+  const [adminEmail, setAdminEmail] = useState("");
+  const [curPass, setCurPass] = useState("");
+  const [newPass, setNewPass] = useState("");
+
+  // ---- notifications (mirrors onboarding step 2) ----
+  const [smtpConfigured, setSmtpConfigured] = useState(false);
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState(587);
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPass, setSmtpPass] = useState("");
+  const [smtpFrom, setSmtpFrom] = useState("");
+  const [slackWebhook, setSlackWebhook] = useState("");
+  const [gchatWebhook, setGchatWebhook] = useState("");
+
+  // ---- DigitalOcean (mirrors onboarding step 3; blank = keep current) ----
+  const [doConfigured, setDoConfigured] = useState(false);
+  const [doToken, setDoToken] = useState("");
+  const [modelKey, setModelKey] = useState("");
+  const [doTest, setDoTest] = useState<string | null>(null);
 
   // new threshold form
   const [tName, setTName] = useState("");
@@ -45,10 +69,33 @@ export default function SettingsPage() {
     Promise.all([
       api.get<{ log: any[] }>("/notifications/log"),
       api.get<{ thresholds: Threshold[] }>("/notifications/thresholds"),
+      api.get<{ authenticated: boolean; email?: string }>("/setup/me"),
+      api.get<{
+        configured: boolean;
+        host: string;
+        port: number;
+        username: string;
+        from: string;
+        has_password: boolean;
+        slack_webhook: string;
+        gchat_webhook: string;
+      }>("/setup/smtp"),
+      api.get<{ setup_complete: boolean; smtp_configured: boolean; do_auth_configured: boolean }>(
+        "/setup/status"
+      ),
     ])
-      .then(([l, t]) => {
+      .then(([l, t, me, smtp, st]) => {
         setLog(l.log as any[]);
         setThresholds(t.thresholds as Threshold[]);
+        if (me.authenticated) setAdminEmail(me.email ?? "");
+        setSmtpConfigured(smtp.configured);
+        setSmtpHost(smtp.host);
+        setSmtpPort(smtp.port);
+        setSmtpUser(smtp.username);
+        setSmtpFrom(smtp.from);
+        setSlackWebhook(smtp.slack_webhook);
+        setGchatWebhook(smtp.gchat_webhook);
+        setDoConfigured(st.do_auth_configured);
       })
       .catch(() => {});
 
@@ -56,10 +103,32 @@ export default function SettingsPage() {
     load();
   }, []);
 
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      await fn();
+    } catch (e: any) {
+      setNotice({ kind: "error", text: e?.body?.error ?? e?.message ?? String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const smtpPayload = () => ({
+    host: smtpHost,
+    port: smtpPort,
+    username: smtpUser,
+    password: smtpPass || undefined,
+    from: smtpFrom,
+    slack_webhook: slackWebhook,
+    gchat_webhook: gchatWebhook,
+  });
+
   return (
     <Grid narrow className="sf-content">
       <Column sm={4} md={8} lg={16}>
-        <h3>Alerts & Notification Log</h3>
+        <h3>Settings</h3>
         {notice && (
           <InlineNotification
             kind={notice.kind}
@@ -71,8 +140,161 @@ export default function SettingsPage() {
         )}
       </Column>
 
+      {/* ---------- administrator (onboarding step 1) ---------- */}
       <Column sm={4} md={8} lg={16}>
-        <h5>New billing threshold</h5>
+        <h5 style={{ margin: "0.5rem 0" }}>Administrator</h5>
+        <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+          Signed in as <strong>{adminEmail || "…"}</strong>. Change the admin password here —
+          the email itself cannot be changed after onboarding.
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}>
+          <PasswordInput
+            id="cur-pass"
+            labelText="Current password"
+            value={curPass}
+            onChange={(e: any) => setCurPass(e.target.value)}
+          />
+          <PasswordInput
+            id="new-pass"
+            labelText="New password (min 8 chars)"
+            value={newPass}
+            onChange={(e: any) => setNewPass(e.target.value)}
+          />
+          <Button
+            kind="secondary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                await api.post("/setup/password", {
+                  current_password: curPass,
+                  new_password: newPass,
+                });
+                setCurPass("");
+                setNewPass("");
+                setNotice({ kind: "success", text: "Admin password updated." });
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Change password"}
+          </Button>
+        </div>
+      </Column>
+
+      {/* ---------- notifications (onboarding step 2) ---------- */}
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>
+          Notifications{" "}
+          {smtpConfigured ? <Tag type="green">configured</Tag> : <Tag type="cool-gray">not set</Tag>}
+        </h5>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}>
+          <TextInput id="set-smtp-host" labelText="SMTP host" value={smtpHost}
+            onChange={(e: any) => setSmtpHost(e.target.value)} />
+          <NumberInput id="set-smtp-port" label="SMTP port" value={smtpPort} min={1} max={65535}
+            onChange={(e: any) => setSmtpPort(Number(e.target.value))} />
+          <TextInput id="set-smtp-user" labelText="SMTP username" value={smtpUser}
+            onChange={(e: any) => setSmtpUser(e.target.value)} />
+          <PasswordInput id="set-smtp-pass" labelText="SMTP password (blank = keep current)"
+            value={smtpPass} onChange={(e: any) => setSmtpPass(e.target.value)} />
+          <TextInput id="set-smtp-from" labelText="From address" value={smtpFrom}
+            onChange={(e: any) => setSmtpFrom(e.target.value)} />
+          <TextInput id="set-slack" labelText="Slack webhook URL (optional)" value={slackWebhook}
+            onChange={(e: any) => setSlackWebhook(e.target.value)} />
+          <TextInput id="set-gchat" labelText="Google Chat webhook URL (optional)" value={gchatWebhook}
+            onChange={(e: any) => setGchatWebhook(e.target.value)} />
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
+          <Button
+            kind="primary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                await api.post("/setup/smtp", smtpPayload());
+                setSmtpPass("");
+                setNotice({ kind: "success", text: "Notification settings saved." });
+                load();
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Save notifications"}
+          </Button>
+          <Button
+            kind="secondary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                await api.post("/setup/smtp", smtpPayload());
+                const r = await api.post<{ ok: boolean; detail: string }>("/setup/smtp/test");
+                setSmtpPass("");
+                setNotice({ kind: "success", text: `Test email: ${r.detail}` });
+                load();
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Save & send test email"}
+          </Button>
+        </div>
+      </Column>
+
+      {/* ---------- DigitalOcean (onboarding step 3) ---------- */}
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>
+          DigitalOcean connection{" "}
+          {doConfigured ? <Tag type="green">connected</Tag> : <Tag type="red">not connected</Tag>}
+        </h5>
+        <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+          Rotate outdated credentials here. Leave a field blank to keep its current value.
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}>
+          <PasswordInput id="set-do-token" labelText="OAuth token (blank = keep current)"
+            value={doToken} onChange={(e: any) => setDoToken(e.target.value)} />
+          <PasswordInput id="set-model-key" labelText="Model access key (blank = keep current)"
+            value={modelKey} onChange={(e: any) => setModelKey(e.target.value)} />
+        </div>
+        {doTest && (
+          <InlineNotification kind="info" title="Connection test" subtitle={doTest}
+            lowContrast style={{ marginTop: "0.75rem" }} />
+        )}
+        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
+          <Button
+            kind="primary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                if (!doToken && !modelKey) throw new Error("Enter at least one credential.");
+                await api.post("/setup/do", {
+                  ...(doToken ? { do_token: doToken } : {}),
+                  ...(modelKey ? { model_access_key: modelKey } : {}),
+                });
+                setDoToken("");
+                setModelKey("");
+                setNotice({ kind: "success", text: "DigitalOcean credentials updated." });
+                load();
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Save credentials"}
+          </Button>
+          <Button
+            kind="secondary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const r = await api.post<{
+                  ok: boolean;
+                  control_plane: { ok: boolean; detail: string };
+                  inference: { ok: boolean; detail: string };
+                }>("/setup/do/test");
+                setDoTest(`control-plane: ${r.control_plane.detail} | inference: ${r.inference.detail}`);
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Test connection"}
+          </Button>
+        </div>
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>New billing threshold</h5>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}>
           <TextInput
             id="t-name"

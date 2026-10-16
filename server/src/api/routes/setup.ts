@@ -7,6 +7,7 @@ import {
   verifyAdmin,
   sessionAdminId,
   destroySession,
+  hashPassword,
 } from "../../auth/admin.js";
 import { sendTestEmail, logNotification } from "../../services/notifier.js";
 import type { Vault } from "../../services/vault.js";
@@ -78,6 +79,32 @@ export function setupRoutes(vault: Vault): Hono {
   });
 
   // Step 2: SMTP + webhooks + thresholds
+  // Non-secret snapshot of the saved notification settings (secrets stay in the vault).
+  gated.get("/smtp", (c) => {
+    const db = getDb();
+    const row = db
+      .prepare("SELECT settings_json FROM app_extras WHERE id='singleton'")
+      .get() as any;
+    let settings: any = {};
+    try {
+      settings = row ? JSON.parse(row.settings_json) : {};
+    } catch {
+      settings = {};
+    }
+    const s = db.prepare("SELECT smtp_configured FROM app_settings WHERE id='singleton'").get() as any;
+    return c.json({
+      configured: !!s?.smtp_configured,
+      host: settings.smtp?.host ?? "",
+      port: settings.smtp?.port ?? 587,
+      username: settings.smtp?.username ?? "",
+      from: settings.smtp?.from ?? "",
+      secure: settings.smtp?.secure ?? false,
+      has_password: !!vault.get("smtp_password"),
+      slack_webhook: settings.slack_webhook ?? "",
+      gchat_webhook: settings.gchat_webhook ?? "",
+    });
+  });
+
   gated.post("/smtp", async (c) => {
     const body = await c.req.json<{
       host?: string;
@@ -144,14 +171,17 @@ export function setupRoutes(vault: Vault): Hono {
     return c.json({ ok: true });
   });
 
-  // Step 3: DigitalOcean auth
+  // Step 3: DigitalOcean auth (accepts full or partial updates so Settings
+  // can rotate one credential without re-entering the other).
   gated.post("/do", async (c) => {
     const body = await c.req.json<{ do_token?: string; model_access_key?: string }>();
-    if (!body.do_token || !body.model_access_key)
-      return c.json({ error: "both tokens required" }, 400);
-    vault.set("do_token", body.do_token.trim());
-    vault.set("model_access_key", body.model_access_key.trim());
-    getDb().prepare("UPDATE app_settings SET do_auth_configured = 1 WHERE id='singleton'").run();
+    const tok = body.do_token?.trim() ?? "";
+    const key = body.model_access_key?.trim() ?? "";
+    if (!tok && !key) return c.json({ error: "provide at least one credential" }, 400);
+    if (tok) vault.set("do_token", tok);
+    if (key) vault.set("model_access_key", key);
+    if (vault.get("do_token") && vault.get("model_access_key"))
+      getDb().prepare("UPDATE app_settings SET do_auth_configured = 1 WHERE id='singleton'").run();
     return c.json({ ok: true });
   });
 
@@ -166,8 +196,26 @@ export function setupRoutes(vault: Vault): Hono {
     return c.json({ ok, control_plane: ctrl, inference: inf }, ok ? 200 : 502);
   });
 
-  gated.post("/complete", (c) => {
-    const s = getDb().prepare("SELECT * FROM app_settings WHERE id='singleton'").get() as any;
+  // Admin password rotation (post-onboarding; /admin stays first-boot-only).
+  gated.post("/password", async (c) => {
+    const m = (c.req.header("Cookie") ?? "").match(/sf_session=([^;]+)/);
+    const adminId = sessionAdminId(m?.[1]);
+    if (!adminId) return c.json({ error: "unauthenticated" }, 401);
+    const body = await c.req.json<{ current_password?: string; new_password?: string }>();
+    const admin = getDb().prepare("SELECT email FROM admins WHERE id=?").get(adminId) as {
+      email: string;
+    };
+    if (!admin || !verifyAdmin(admin.email, body.current_password ?? ""))
+      return c.json({ error: "current password is incorrect" }, 401);
+    if ((body.new_password ?? "").length < 8)
+      return c.json({ error: "new password must be ≥ 8 chars" }, 400);
+    getDb()
+      .prepare("UPDATE admins SET password_hash = ? WHERE id = ?")
+      .run(hashPassword(body.new_password!), adminId);
+    return c.json({ ok: true });
+  });
+
+  gated.post("/complete", (c) => {    const s = getDb().prepare("SELECT * FROM app_settings WHERE id='singleton'").get() as any;
     // Notifications are optional; admin + DigitalOcean credentials are required.
     if (!adminExists() || !s.do_auth_configured)
       return c.json({ error: "admin account and DigitalOcean credentials are required" }, 400);
