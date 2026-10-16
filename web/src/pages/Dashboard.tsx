@@ -1,0 +1,147 @@
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Grid,
+  Column,
+  ClickableTile,
+  Button,
+  InlineLoading,
+  Tag,
+} from "@carbon/react";
+import { AreaChart, DonutChart } from "@carbon/charts-react";
+import { api } from "../api";
+
+interface BillingSummary {
+  state: {
+    compute_balance: number;
+    inference_balance: number;
+    is_blocked: number;
+    last_synced: string;
+  };
+  history: Array<{ ts: string; compute_balance: number; inference_balance: number }>;
+}
+
+export default function Dashboard() {
+  const [billing, setBilling] = useState<BillingSummary | null>(null);
+  const [series, setSeries] = useState<any[]>([]);
+  const [byModel, setByModel] = useState<any[]>([]);
+  const [syncing, setSyncing] = useState(false);
+
+  const load = () =>
+    Promise.all([
+      api.get<BillingSummary>("/billing/summary"),
+      api.get<{ series: any[] }>("/telemetry/series?days=7"),
+      api.get<{ by_model: any[] }>("/telemetry/by-model?days=7"),
+    ])
+      .then(([b, s, m]) => {
+        setBilling(b);
+        setSeries(s.series);
+        setByModel(m.by_model as any[]);
+      })
+      .catch(() => {});
+
+  useEffect(() => {
+    load();
+    const h = setInterval(load, 60_000);
+    return () => clearInterval(h);
+  }, []);
+
+  const areaData = useMemo(
+    () =>
+      series.map((r) => ({
+        group: r.model_id,
+        date: new Date(r.hour_ts).getTime(),
+        value: r.prompt_tokens + r.completion_tokens,
+      })),
+    [series]
+  );
+
+  const donutData = useMemo(
+    () =>
+      (byModel as any[]).map((r: any) => ({
+        group: r.model_id,
+        value: Math.round((r.cost ?? 0) * 10000) / 10000,
+      })),
+    [byModel]
+  );
+
+  const s = billing?.state;
+
+  return (
+    <Grid narrow className="sf-content">
+      <Column sm={4} md={8} lg={16}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3>Dashboard</h3>
+          <Button
+            kind="ghost"
+            size="sm"
+            disabled={syncing}
+            onClick={async () => {
+              setSyncing(true);
+              await api.post("/billing/sync").catch(() => {});
+              await load();
+              setSyncing(false);
+            }}
+          >
+            {syncing ? <InlineLoading /> : "Sync now"}
+          </Button>
+        </div>
+      </Column>
+
+      <Column sm={4} md={4} lg={5}>
+        <ClickableTile onClick={load}>
+          <div className="sf-muted">Core Compute (month-to-date)</div>
+          <div className="sf-stat-number">
+            ${s ? s.compute_balance.toFixed(2) : "—"}
+          </div>
+          <div className="sf-muted">
+            last synced {s ? new Date(s.last_synced).toLocaleString() : "never"}
+          </div>
+        </ClickableTile>
+      </Column>
+
+      <Column sm={4} md={4} lg={5}>
+        <ClickableTile onClick={load}>
+          <div className="sf-muted">AI Inference (prepaid remaining)</div>
+          <div className="sf-stat-number">
+            ${s ? s.inference_balance.toFixed(2) : "—"}
+          </div>
+          {s?.is_blocked === 1 && <Tag type="red">threshold breached</Tag>}
+        </ClickableTile>
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1rem 0 0.5rem" }}>Token burn rate (7 days)</h5>
+        {areaData.length > 0 ? (
+          <AreaChart
+            data={areaData}
+            options={{
+              axes: {
+                left: { mapsTo: "value" },
+                bottom: { scaleType: "time", mapsTo: "date" },
+              },
+              height: "260px",
+              curve: "curveMonotoneX",
+            } as any}
+          />
+        ) : (
+          <p className="sf-muted">
+            No telemetry yet. Push usage objects to{" "}
+            <code>POST /api/v1/telemetry/ingest</code>.
+          </p>
+        )}
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1rem 0 0.5rem" }}>Cost distribution by model (7 days)</h5>
+        {donutData.length > 0 ? (
+          <DonutChart
+            data={donutData}
+            options={{ height: "260px" } as any}
+          />
+        ) : (
+          <p className="sf-muted">No spend recorded yet.</p>
+        )}
+      </Column>
+    </Grid>
+  );
+}
