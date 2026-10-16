@@ -34,20 +34,35 @@ the $6-tier values.
 
 ## What's inside
 
-- **Setup wizard** (PRD §2.1): admin account → SMTP/Slack/GChat + thresholds (with
+- **Setup wizard** (PRD §2.1, §6.5): admin account → SMTP/Slack/GChat + thresholds (with
   *Send Test Email*) → DO OAuth + `$MODEL_ACCESS_KEY` (with *Test Connection*).
-  All traffic is forced through `/setup` until `setup_complete`.
-- **Dual billing** (PRD §2.2): polls `/v2/customers/my/balance` and
-  `/v2/customers/my/prepayment_config` every 5 min; breach of user thresholds
-  triggers email/Slack/Google Chat with cooldown dedupe.
+  All traffic is forced through `/setup` until `setup_complete`. Notifications are
+  optional/skippable.
+- **Settings mirrors onboarding**: every wizard step stays editable after setup —
+  admin password rotation (`POST /setup/password`), full SMTP/webhook re-configuration
+  (`GET`+`POST /setup/smtp`), and per-credential DO rotation (`POST /setup/do`
+  accepts partial updates; blank = keep current).
+- **Billing breakdown, not just balances** (PRD §2.2, §6.2): the 5-minute sync polls
+  `/v2/customers/my/balance` + prepayment endpoints **and** the Billing Insights API,
+  classifying every SKU line into Core Compute / GenAI usage / Tax / Credits.
+  Dashboard tiles: Core Compute MTD, GenAI Usage MTD (tax inline), Prepaid Inference
+  remaining (of $X prepaid), Account Payments (from `/billing_history`). Note: DO
+  exposes no API for the *live* AI-credit remaining — that figure exists only on
+  DO's billing page.
 - **Telemetry** (billing-only mode): clients push `usage` objects to
-  `POST /api/v1/telemetry/ingest` (HMAC-authed); costs priced from a bundled table;
-  hourly rollups keep 7-day charts cheap.
-- **Router rules** (PRD §2.3): ordered rules, Cost⇄Latency sliders, snapshots +
-  rollback (append-only history).
+  `POST /api/v1/telemetry/ingest` (HMAC-authed); costs priced from a bundled table
+  built on real DO per-model rates; hourly rollups keep 7-day charts cheap. One-off
+  `server/scripts/backfill-telemetry.mjs` seeds history from stored billing-insights lines.
+- **Live model routers** (PRD §2.3, §6.3): full CRUD against DO's
+  `/v2/gen-ai/models/routers` via `/api/v1/model-routers` (policies, fallback models,
+  cheapest/fastest selection). DO-managed routers (e.g. `inference-router`) are tagged
+  and their Edit/Delete is disabled — DO rejects those with 403. Routers are invoked
+  as `model: "router:<name>"` on `https://inference.do-ai.run/v1/chat/completions`.
+  The local rule engine remains as an offline advisor.
 - **Model registry** (PRD §2.4): merged DO `/v1/models` + lifecycle states;
   REST-first, `doctl` fallback with captured stdout/stderr shown in a terminal modal.
-- **Carbon UI** (PRD §3): g100-dark default with g10 toggle, `<Grid>/<Column sm={4} md={8} lg={16}>`
+- **Carbon UI** (PRD §3): g100-dark default with g10 toggle applied to `<html>`
+  (`cds--g100`/`cds--g10` classes, so the whole page themes), `<Grid>/<Column sm={4} md={8} lg={16}>`
   (no hand-rolled media queries), ProgressIndicator wizard, AreaChart/DonutChart,
   StructuredList+Toggle, Modal+CodeSnippet.
 
@@ -59,7 +74,7 @@ fetch("https://<sailfish-host>:8080/api/v1/telemetry/ingest", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    Authorization: "Bearer <INGEST_TOKEN from Settings>",
+    Authorization: "Bearer <ingest token>",
   },
   body: JSON.stringify({
     model_id: model,
@@ -76,6 +91,8 @@ once server-side; never ship the raw DO key to clients.
 
 ```
 server/   Hono + node:sqlite backend (TypeScript)
+  scripts/  ops helpers: billing probes, telemetry backfill/clear,
+              router listing + invocation tools
 web/      Vite + React + @carbon/react SPA
 deploy/   droplet bootstrap script
 Dockerfile, docker-compose.yml   single-container deployment

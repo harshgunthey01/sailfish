@@ -192,3 +192,67 @@ viewport property bindings (sm={4}, md={8}, lg={16}).
 
 -- 7 of 7 --
 
+6. Implementation Amendments (as-built)
+Sections 1–5 above are the extracted source requirements, preserved verbatim.
+This section records what was actually built where it differs or goes further.
+
+6.1. Backend: Node + SQLite instead of PocketBase (§4)
+- Single-process Hono monolith on `node:sqlite` (Node 22+ built-in, zero native
+  deps); no PocketBase. Schema intent from §4.1 is preserved in
+  `server/src/db/schema.ts` with incremental `ALTER TABLE` migrations for existing DBs.
+- Credential vault: AES-256-GCM `vault.json` keyed off `/data/.machine-secret`;
+  no plaintext secrets in SQLite. Admin auth is scrypt + httpOnly session cookies.
+- Telemetry ingest is HMAC-authed: `Authorization: Bearer
+  HMAC-SHA256("sailfish-ingest-v1", model_access_key)`.
+
+6.2. Billing: per-product breakdown, not just two balances (§2.2)
+- The sync polls `/balance` + prepayment endpoints AND the Billing Insights API
+  (`/v2/billing/{urn}/insights/{start}/{end}`), classifying each SKU line:
+  `1-AI-*` → GenAI usage, `1-DO-AI*` → AI credit purchases, `1-DO-ADJMT-00TAX` →
+  tax, negative amounts → credits, everything else → core compute.
+- `billing_state` gains: `core_compute_mtd`, `ai_usage_mtd`, `tax_mtd`,
+  `account_balance`, `prepaid_amount`, `payments_json` (from
+  `/v2/customers/my/billing_history`), `breakdown_json`; `billing_history` gains
+  the MTD columns. Rationale: the account-wide `month_to_date_balance` was once
+  mislabelled "Core Compute" when it was actually GST — the breakdown makes each
+  bucket auditable.
+- Prepayment parsing handles the live nested shape
+  (`{config: {prepay_amount…}, status: {balance…}}`); remaining = `status.balance`
+  with `prepaid − used` as fallback.
+- Known platform gap: DO exposes NO public API for the *live* AI-credit remaining
+  (`/credits` 404s, `/balance` is a cached snapshot, prepayment endpoints cover
+  only the prepaid plan). The dashboard shows verifiable figures (payments ledger,
+  usage MTD) and points at DO's billing page for the live remainder.
+
+6.3. Router: live DO routers, not just local rules (§2.3)
+- Full CRUD proxy at `/api/v1/model-routers` → DO `/v2/gen-ai/models/routers`
+  (policies, fallback models, cheapest/fastest selection). Router routes need only
+  the OAuth token, not the model key. Local `router_rules` remain as an offline
+  advisor section.
+- DO-managed routers (e.g. `inference-router`, "DigitalOcean managed Inference
+  Router") expose no config and DO rejects edits/deletes with 403: the UI tags
+  them and disables Edit/Delete. The proxy forwards DO's real HTTP status
+  instead of a blanket 502.
+- Invocation: routers are addressed as `model: "router:<name>"` on
+  `https://inference.do-ai.run/v1/chat/completions`.
+
+6.4. Telemetry pricing reflects real rates (§2.2, §3.2)
+- The bundled `PRICING` table uses real DO per-1M rates taken from insights
+  `@ $X/thousand` annotations (deepseek-4-flash, deepseek-v4.1-flash,
+  qwen3.8-max, glm-5.3/flash, gpt-oss-120b).
+- `server/scripts/backfill-telemetry.mjs` (idempotent) seeds `telemetry_hourly`
+  from stored insights lines at DO's own dollar amounts.
+- Donut values use 6-decimal precision so sub-cent costs don't render as 0.
+
+6.5. Settings replicates onboarding (§2.1)
+- Every wizard step is editable post-setup: admin password rotation
+  (`POST /setup/password`, current password required; email immutable),
+  SMTP/webhook read + update (`GET`/`POST /setup/smtp`, blank password = keep),
+  per-credential DO rotation (`POST /setup/do` accepts partial updates),
+  plus the wizard's test-email / test-connection actions. Secrets are never
+  displayed back; status tags confirm what is stored.
+
+6.6. Theming correction (§3.1)
+- Dark/light mode applies `cds--g100` / `cds--g10` classes to `<html>` so the
+  whole page themes, not just the React tree.
+
