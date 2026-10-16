@@ -60,6 +60,22 @@ export default function SettingsPage() {
   const [creditRemaining, setCreditRemaining] = useState("");
   const [creditAsOf, setCreditAsOf] = useState<string | null>(null);
 
+  // ---- backups ----
+  const [backups, setBackups] = useState<Array<{ file: string; bytes: number; created_at: string }>>([]);
+  const [pendingRestore, setPendingRestore] = useState<string | null>(null);
+
+  const loadBackups = () =>
+    api
+      .get<{
+        backups: Array<{ file: string; bytes: number; created_at: string }>;
+        pending: string | null;
+      }>("/backups")
+      .then((r) => {
+        setBackups(r.backups);
+        setPendingRestore(r.pending);
+      })
+      .catch(() => {});
+
   // new threshold form
   const [tName, setTName] = useState("");
   const [tMetric, setTMetric] = useState("compute_balance");
@@ -108,6 +124,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     load();
+    loadBackups();
   }, []);
 
   const run = async (fn: () => Promise<void>) => {
@@ -333,6 +350,124 @@ export default function SettingsPage() {
             {busy ? <InlineLoading /> : "Save credit balance"}
           </Button>
         </div>
+      </Column>
+
+      <Column sm={4} md={8} lg={16}>
+        <h5 style={{ margin: "1.5rem 0 0.5rem" }}>Backups</h5>
+        <p className="sf-muted" style={{ marginBottom: "1rem" }}>
+          Automatic daily backup (03:00) plus one at boot when stale — newest 7 kept.
+          Restoring stages the file and needs an app restart to take effect; a safety
+          snapshot is taken first.
+        </p>
+        {pendingRestore && (
+          <InlineNotification
+            kind="warning"
+            title="Restore staged"
+            subtitle={`${pendingRestore} will replace the database on next restart. Restart the app to apply, or cancel below.`}
+            lowContrast
+            style={{ marginBottom: "0.75rem" }}
+          />
+        )}
+        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+          <Button
+            kind="primary"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const r = await api.post<{ ok: boolean; backup: { file: string } }>("/backups");
+                setNotice({ kind: "success", text: `Backup created: ${r.backup.file}` });
+                loadBackups();
+              })
+            }
+          >
+            {busy ? <InlineLoading /> : "Back up now"}
+          </Button>
+          {pendingRestore && (
+            <Button
+              kind="secondary"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  await api.delete("/backups/pending/restore");
+                  setNotice({ kind: "success", text: "Staged restore cancelled." });
+                  loadBackups();
+                })
+              }
+            >
+              Cancel staged restore
+            </Button>
+          )}
+        </div>
+        <StructuredListWrapper>
+          <StructuredListHead>
+            <StructuredListRow head>
+              <StructuredListCell head>File</StructuredListCell>
+              <StructuredListCell head>Size</StructuredListCell>
+              <StructuredListCell head>Actions</StructuredListCell>
+            </StructuredListRow>
+          </StructuredListHead>
+          <StructuredListBody>
+            {backups.map((b) => (
+              <StructuredListRow key={b.file}>
+                <StructuredListCell>{b.file}</StructuredListCell>
+                <StructuredListCell>{(b.bytes / 1024).toFixed(1)} KB</StructuredListCell>
+                <StructuredListCell>
+                  <div style={{ display: "flex", gap: "0.25rem" }}>
+                    <Button
+                      size="sm"
+                      kind="ghost"
+                      onClick={() => {
+                        window.open(`/api/v1/backups/${encodeURIComponent(b.file)}/download`, "_blank");
+                      }}
+                    >
+                      Download
+                    </Button>
+                    <Button
+                      size="sm"
+                      kind="danger--ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `Restore ${b.file}? A safety snapshot is taken first, but the app must be restarted before it takes effect.`
+                          )
+                        )
+                          return;
+                        run(async () => {
+                          const r = await api.post<{ ok: boolean; safety: string }>(
+                            `/backups/${encodeURIComponent(b.file)}/restore`
+                          );
+                          setNotice({
+                            kind: "success",
+                            text: `Restore staged (safety: ${r.safety}). Restart the app to apply.`,
+                          });
+                          loadBackups();
+                        });
+                      }}
+                    >
+                      Restore
+                    </Button>
+                    <Button
+                      size="sm"
+                      kind="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        if (!window.confirm(`Delete backup ${b.file}?`)) return;
+                        run(async () => {
+                          await api.delete(`/backups/${encodeURIComponent(b.file)}`);
+                          loadBackups();
+                        });
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </StructuredListCell>
+              </StructuredListRow>
+            ))}
+          </StructuredListBody>
+        </StructuredListWrapper>
+        {backups.length === 0 && <p className="sf-muted">No backups yet.</p>}
       </Column>
 
       <Column sm={4} md={8} lg={16}>

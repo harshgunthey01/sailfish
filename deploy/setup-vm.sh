@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Sailfish one-time VM setup for a $4–$6 DigitalOcean Droplet (Ubuntu 22.04/24.04).
+# Sailfish one-time VM setup for a DigitalOcean Droplet (Ubuntu 22.04/24.04).
 # Run as root on a fresh droplet:  curl -fsSL <raw-url> | bash   (or scp + bash)
 set -euo pipefail
 
 echo "==> Sailfish VM bootstrap"
 
-# 1) Swap (essential on 512MB). 1GB swap makes a $4 box comfortable.
+# 1) Swap (good hygiene on small VMs; harmless elsewhere).
 if [ ! -f /swapfile ]; then
   echo "==> creating 1G swapfile"
   fallocate -l 1G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=1024

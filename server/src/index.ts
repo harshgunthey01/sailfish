@@ -12,8 +12,10 @@ import { billingRoutes, telemetryRoutes } from "./api/routes/billing.js";
 import { routerRoutes } from "./api/routes/router.js";
 import { modelRouterRoutes } from "./api/routes/model-routers.js";
 import { modelRoutes } from "./api/routes/models.js";
+import { backupRoutes } from "./api/routes/backups.js";
 import { notificationRoutes } from "./api/routes/notifications.js";
 import { scheduleEvery, scheduleDaily } from "./services/scheduler.js";
+import { applyPendingRestore, createBackup, listBackups } from "./services/backup.js";
 import { syncBilling } from "./services/billing-sync.js";
 import { notifyBreaches } from "./services/thresholds.js";
 import { sendChannel } from "./services/notifier.js";
@@ -29,6 +31,10 @@ function log(obj: Record<string, unknown>) {
 }
 
 async function main() {
+  // A staged restore replaces the DB file BEFORE it is opened.
+  const restored = applyPendingRestore(DATA_DIR);
+  if (restored) log({ event: "restore-applied", file: restored });
+
   initDb(DATA_DIR);
   const vault = new Vault(DATA_DIR);
 
@@ -66,6 +72,7 @@ async function main() {
   protectedApp.route("/model-routers", modelRouterRoutes(vault));
   protectedApp.route("/models", modelRoutes(vault));
   protectedApp.route("/notifications", notificationRoutes(vault));
+  protectedApp.route("/backups", backupRoutes(DATA_DIR));
   app.route("/api/v1", protectedApp);
 
   // ---- static SPA ----
@@ -97,6 +104,30 @@ async function main() {
   scheduleDaily("prune", 4, () => {
     pruneTelemetry();
     log({ task: "prune", detail: "ok" });
+  });
+
+  // Daily automated backup (03:00) + one at boot if none in the last 24h.
+  const bootBackup = () => {
+    try {
+      const latest = listBackups(DATA_DIR)[0];
+      const stale =
+        !latest || Date.now() - new Date(latest.created_at).getTime() > 24 * 3600_000;
+      if (stale) {
+        const b = createBackup(DATA_DIR);
+        log({ task: "backup", detail: "ok", file: b.file, when: "boot" });
+      }
+    } catch (e) {
+      log({ task: "backup", detail: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  bootBackup();
+  scheduleDaily("backup", 3, () => {
+    try {
+      const b = createBackup(DATA_DIR);
+      log({ task: "backup", detail: "ok", file: b.file, when: "scheduled" });
+    } catch (e) {
+      log({ task: "backup", detail: e instanceof Error ? e.message : String(e) });
+    }
   });
 
   // resume stuck jobs on boot

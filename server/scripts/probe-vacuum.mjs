@@ -1,0 +1,13 @@
+import { DatabaseSync } from "node:sqlite";
+import fs from "node:fs";
+fs.mkdirSync("./data/tmp-bak-test", { recursive: true });
+const db = new DatabaseSync("./data/sailfish.db");
+db.exec("VACUUM INTO './data/tmp-bak-test/probe.db'");
+const st = fs.statSync("./data/tmp-bak-test/probe.db");
+console.log("VACUUM INTO ok, bytes:", st.size);
+const v = new DatabaseSync("./data/tmp-bak-test/probe.db");
+console.log("tables:", JSON.stringify(v.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table'").get()));
+v.close();
+db.close();
+fs.rmSync("./data/tmp-bak-test", { recursive: true, force: true });
+console.log("probe cleaned");

@@ -5,8 +5,8 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
-    # Tuned for a $4 / 512MB Droplet. On $6 / 1GB, raise mem_limit to 768m
-    # and NODE_OPTIONS max-old-space-size to 384.
+    # Conservative defaults suit small hosts; raise mem_limit and
+    # NODE_OPTIONS max-old-space-size on larger machines.
     mem_limit: 384m
     memswap_limit: 1g
     cpus: "1.0"

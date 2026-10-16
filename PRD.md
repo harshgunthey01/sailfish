@@ -256,3 +256,14 @@ This section records what was actually built where it differs or goes further.
 - Dark/light mode applies `cds--g100` / `cds--g10` classes to `<html>` so the
   whole page themes, not just the React tree.
 
+6.7. Backups & sizing
+- No size tier is prescribed: the early "$4 droplet" framing was hypothetical.
+  `docker-compose.yml` carries conservative resource defaults; raise them on
+  larger hosts. `deploy/setup-vm.sh` provisions swap as good hygiene on any
+  small VM.
+- Backup/restore is Node-native SQLite, not PocketBase hooks (there is no
+  PocketBase in this stack — §6.1): `VACUUM INTO` snapshots to
+  `data/backups/`, newest 7 kept, daily schedule + boot-when-stale, staged
+  restores applied pre-open with a safety snapshot, all behind the admin
+  session in Settings.
+

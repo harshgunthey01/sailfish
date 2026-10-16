@@ -4,8 +4,8 @@
 for DigitalOcean Serverless Inference + core compute costs. See `ARCHITECTURE.md`
 for the full system design and `PRD.md` for the source requirements.
 
-Runs on a **$4–$6 DigitalOcean Droplet** in a single Docker container:
-Node.js + embedded SQLite serving a prebuilt React (Carbon) SPA.
+Runs in a **single Docker container** on any DigitalOcean Droplet (or any Docker
+host): Node.js + embedded SQLite serving a prebuilt React (Carbon) SPA.
 
 ## Quick start (local dev)
 
@@ -16,7 +16,7 @@ npm run dev          # server :8080 (tsx watch) + web :5173 (vite, proxies /api)
 
 Open http://localhost:5173 → the setup wizard runs on first boot.
 
-## Deploy to a $4/$6 Droplet
+## Deploy to a Droplet
 
 ```bash
 # one-time host setup (swap + docker)
@@ -29,8 +29,8 @@ docker compose up -d --build
 # open http://<droplet-ip>:8080
 ```
 
-Memory limits in `docker-compose.yml` are tuned for the 512MB tier; comments show
-the $6-tier values.
+Resource limits in `docker-compose.yml` are conservative defaults that suit
+small hosts; raise them on larger machines (comments in the file show how).
 
 ## What's inside
 
@@ -61,6 +61,10 @@ the $6-tier values.
   The local rule engine remains as an offline advisor.
 - **Model registry** (PRD §2.4): merged DO `/v1/models` + lifecycle states;
   REST-first, `doctl` fallback with captured stdout/stderr shown in a terminal modal.
+- **Backups** (PRD §6.7): automatic daily SQLite snapshots (`VACUUM INTO`,
+  newest 7 kept, plus one at boot when stale) with one-click Backup now,
+  Download, staged Restore (safety snapshot first, applied on restart), and
+  Delete — all in Settings. No external tooling; single-tenant by design.
 - **Carbon UI** (PRD §3): g100-dark default with g10 toggle applied to `<html>`
   (`cds--g100`/`cds--g10` classes, so the whole page themes), `<Grid>/<Column sm={4} md={8} lg={16}>`
   (no hand-rolled media queries), ProgressIndicator wizard, AreaChart/DonutChart,

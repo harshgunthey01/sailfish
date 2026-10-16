@@ -229,3 +229,36 @@ lines but incomplete rates appear with `rates: "unknown"` and no savings.
 1. Ratios recomputed by hand from `billing_daily` match the endpoint.
 2. A model with no cache lines shows "no cache data", never 0%.
 3. Savings total equals the sum of per-model savings (no hidden remainder).
+
+---
+
+## Phase 5 — Core compute inventory (specified, not built)
+
+**Why now:** the $4-box constraint was hypothetical; Sailfish is a full
+DigitalOcean FinOps surface. The `core` bucket, `billing_daily` model_key
+`core`, and per-SKU/region insights lines already flow — this phase turns
+them into an inventory.
+
+### API (all read-only)
+
+- `DOClient.listDroplets()` → `GET /v2/droplets?per_page=200` (id, name,
+  region, size_slug, status, created_at, tags). Paginate if needed.
+- Reuse `billingInsights()`: core-compute spend attribution matches insights
+  lines to droplets by region + size family where SKUs allow it; anything
+  unattributable stays under `core` (never forced onto a droplet).
+
+### UI — new "Infrastructure" page (sidenav entry)
+
+- Droplet table: name · region · size · status · created · est. MTD cost
+  (attributed where possible, "shared/ unattributed" otherwise).
+- Power actions are explicitly **out of scope** v1 (no start/stop/destroy —
+  too destructive for a billing app). Revisit only with per-action confirm +
+  audit log.
+- B1 droplet metrics (Phase 3) plug into per-row expanders when built.
+
+### Acceptance
+
+1. With zero droplets, the page says so (like today's $0.00 tile) — no empty
+   tables that look broken.
+2. Attributed + unattributed core spend sums exactly to `core_compute_mtd`.
+3. No write endpoints: page performs zero state-changing DO calls.
